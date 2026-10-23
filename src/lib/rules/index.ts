@@ -1,0 +1,10 @@
+export { RuleError } from "./errors";
+export { parseExpression, maxDice, rollDice, assertD12, rollDie } from "./dice";
+export { damageBonus, resolveAttack, outcomeLabel } from "./attack";
+export type { AttackInput, AttackOutcome, AttackResult, BonusMode } from "./attack";
+export { manaMaximum, spendMana, resolveCast, resolveCheck } from "./cast";
+export type { CastInput, CastResult, CheckResult } from "./cast";
+export { HERO_START, HERO_CAP, awardHeroPoint, spendHeroPoint, shortRest, longRest } from "./rest";
+export type { RestSnapshot, RestResult } from "./rest";
+export { rollStatPool, rollHitPoints, tagCountAllowed, stackedAc } from "./creation";
+export type { StatPool, HitPointRoll } from "./creation";
