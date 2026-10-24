@@ -8,7 +8,7 @@ import type { Action, Character, Foe, LogEntry, Member, TableState, Trouble, Tro
 import { RuleError } from "../rules/errors";
 import { exportTable, parseCodexFile } from "../table/export";
 import { LIBRARY_WAITING, libraryOf } from "../table/library";
-import { downscalePortrait, portraitObjectName, type ArtBucket } from "../portrait";
+import { characterArtObjectNames, downscalePortrait, portraitObjectName, type ArtBucket } from "../portrait";
 import { characterFromCard, present } from "../table/present";
 import { applyAction } from "../table/reducer";
 import type { Viewer } from "./local";
@@ -118,6 +118,21 @@ export function isMissingRelation(error: { code?: string; message?: string } | n
   if (error.code === "PGRST205" || error.code === "42P01") return true;
   return /schema cache|could not find the table|relation .* does not exist/i.test(error.message ?? "");
 }
+
+export function isMissingClaimRpc(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST202") return true;
+  return /could not find the function/i.test(error.message ?? "") && /claim_character/i.test(error.message ?? "");
+}
+
+/** The character-art trigger deletes storage.objects, which Supabase rejects. */
+export function isStorageTriggerBlock(error: { message?: string } | null): boolean {
+  return /protect_delete|storage\.objects|delete_character_art/i.test(error?.message ?? "");
+}
+
+const CLAIM_MIGRATION = "Claiming needs supabase/migrations/004_claim_and_character_art.sql.";
+const DELETE_MIGRATION = "Deleting a character needs supabase/migrations/004_claim_and_character_art.sql. The character is still at the table.";
+const DUPLICATE_NAME = "That name is already at this table. Claim that sheet instead of adding another.";
 
 function characterFromRow(row: CharacterRow): Character {
   const sheet = { ...(row.sheet as Character) };
@@ -371,6 +386,30 @@ async function diffLibrary(prev: TableState, next: TableState): Promise<void> {
   }
 }
 
+async function claimExistingCharacter(characterId: string): Promise<void> {
+  const { error } = await getSupabase().rpc("claim_character", { p_character_id: characterId });
+  if (isMissingClaimRpc(error)) throw new RuleError(CLAIM_MIGRATION);
+  fail(error);
+}
+
+async function listCharacterArt(tableId: string, character: Character): Promise<string[]> {
+  const folder = `${tableId}/${character.id}`;
+  const listed = await getSupabase().storage.from("character-art").list(folder, { limit: 100 });
+  const files = listed.error ? [] : (listed.data ?? []).map((file) => file.name);
+  return characterArtObjectNames(tableId, character.id, character.portraitPath, files);
+}
+
+async function deleteCharacterRow(tableId: string, character: Character): Promise<void> {
+  const art = await listCharacterArt(tableId, character);
+  const { data, error } = await getSupabase().from("characters").delete().eq("id", character.id).select("id");
+  if (isStorageTriggerBlock(error)) throw new RuleError(DELETE_MIGRATION);
+  fail(error);
+  if (!data?.length) throw new RuleError("That character didn't leave the table.");
+  if (art.length === 0) return;
+  const { error: storageError } = await getSupabase().storage.from("character-art").remove(art);
+  fail(storageError);
+}
+
 async function diffCharacters(prev: TableState, next: TableState): Promise<void> {
   const supabase = getSupabase();
   const before = new Map(prev.characters.map((character) => [character.id, character]));
@@ -378,21 +417,24 @@ async function diffCharacters(prev: TableState, next: TableState): Promise<void>
     const old = before.get(character.id);
     const row = characterToRow(next.table.id, character);
     if (character.concealed) {
-      if (character.ownerId && character.ownerId !== old?.ownerId) {
-        const { error } = await supabase
-          .from("characters")
-          .update({ owner_id: character.ownerId, updated_at: new Date().toISOString() })
-          .eq("id", character.id);
-        fail(error);
+      // The stub has an empty sheet. Never insert a second row, and never write that sheet.
+      if (!old) throw new RuleError("That character isn't at this table.");
+      if (character.ownerId && character.ownerId !== old.ownerId) {
+        await claimExistingCharacter(character.id);
       }
       before.delete(character.id);
       continue;
     }
     if (!old) {
       const { error } = await supabase.from("characters").insert({ ...row, updated_at: new Date().toISOString() });
+      if (error?.code === "23505" || /characters_one_name_per_table/i.test(error?.message ?? "")) {
+        throw new RuleError(DUPLICATE_NAME);
+      }
       fail(error);
-    } else if (old.concealed || JSON.stringify(characterToRow(next.table.id, old)) !== JSON.stringify(row)) {
-      const { error } = await supabase
+    } else if (old.concealed) {
+      if (row.owner_id && row.owner_id !== old.ownerId) await claimExistingCharacter(character.id);
+    } else if (JSON.stringify(characterToRow(next.table.id, old)) !== JSON.stringify(row)) {
+      const { data, error } = await supabase
         .from("characters")
         .update({
           owner_id: row.owner_id,
@@ -401,15 +443,16 @@ async function diffCharacters(prev: TableState, next: TableState): Promise<void>
           sheet: row.sheet,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", character.id);
+        .eq("id", character.id)
+        .select("id");
       fail(error);
+      if (!data?.length) throw new RuleError("That sheet didn't save.");
     }
     before.delete(character.id);
   }
   for (const leftover of before.values()) {
     if (leftover.concealed) continue;
-    const { error } = await supabase.from("characters").delete().eq("id", leftover.id);
-    fail(error);
+    await deleteCharacterRow(next.table.id, leftover);
   }
 }
 

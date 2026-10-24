@@ -239,6 +239,7 @@ export type Action =
   | { type: "shortRest" }
   | { type: "longRest" }
   | { type: "addCharacter"; character: Character }
+  | { type: "removeCharacter"; characterId: string }
   | { type: "addFoe"; foe: Foe }
   | { type: "patchFoe"; foeId: string; patch: Partial<Omit<Foe, "id">> }
   | { type: "removeFoe"; foeId: string }

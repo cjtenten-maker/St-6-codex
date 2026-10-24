@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ID } from "./ids";
-import { PORTRAIT_MAX_BYTES, assertPortraitFile, portraitObjectName } from "./portrait";
+import { PORTRAIT_MAX_BYTES, assertPortraitFile, characterArtObjectNames, portraitObjectName } from "./portrait";
 
 const ART_NAME =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9]{1,16}\.jpg$/i;
@@ -24,5 +24,15 @@ describe("character portraits", () => {
     expect(name).toBe(`${ID.table}/${ID.naibroch}/1700000000000.jpg`);
     expect(name).toMatch(ART_NAME);
     expect(() => portraitObjectName("../secrets", ID.naibroch)).toThrow(/portrait/);
+  });
+
+  it("collects only this character's portrait files", () => {
+    const current = portraitObjectName(ID.table, ID.naibroch, 1_700_000_000_000);
+    const names = characterArtObjectNames(ID.table, ID.naibroch, current, ["1700000000001.jpg", "../other.jpg", "notes.txt"]);
+    expect(names).toEqual([
+      `${ID.table}/${ID.naibroch}/1700000000000.jpg`,
+      `${ID.table}/${ID.naibroch}/1700000000001.jpg`,
+    ]);
+    expect(characterArtObjectNames(ID.table, ID.naibroch, "data:image/jpeg;base64,abc", [])).toEqual([]);
   });
 });

@@ -42,6 +42,8 @@ export function applyAction(state: TableState, action: Action, ctx: ActionContex
       return rest(state, actor, "long", ctx);
     case "addCharacter":
       return addCharacter(state, actor, action.character);
+    case "removeCharacter":
+      return removeCharacter(state, actor, action.characterId, ctx);
     case "addFoe":
       return addFoe(state, actor, action.foe, ctx);
     case "patchFoe":
@@ -133,7 +135,9 @@ function setPortrait(state: TableState, actor: Member, characterId: string, port
 function patchCharacter(state: TableState, actor: Member, characterId: string, patch: CharacterPatch): TableState {
   const character = requireCharacter(state, characterId);
   assertCanEdit(state, actor, character);
-  return mapCharacter(state, characterId, (current) => normalizeCharacter({ ...current, ...patch, id: current.id }));
+  const next = normalizeCharacter({ ...character, ...patch, id: character.id });
+  assertUniqueName(state, next);
+  return mapCharacter(state, characterId, () => next);
 }
 
 function setEligible(state: TableState, actor: Member, memberIds: string[]): TableState {
@@ -260,7 +264,34 @@ function addCharacter(state: TableState, actor: Member, character: Character): T
   }
   const next = normalizeCharacter({ ...character, seated: false, ownerId: character.ownerId });
   if (state.characters.some((c) => c.id === next.id)) throw new RuleError("That hero is already here.");
+  assertUniqueName(state, next);
   return { ...state, characters: [...state.characters, next] };
+}
+
+function removeCharacter(state: TableState, actor: Member, characterId: string, ctx: ActionContext): TableState {
+  const character = requireCharacter(state, characterId);
+  if (character.concealed) throw new RuleError(`${character.name}'s sheet is private.`);
+  if (!isGm(state, actor) && character.ownerId !== actor.id) {
+    throw new RuleError(`Only ${character.name}'s player or the GM can retire them.`);
+  }
+  const characters = state.characters.filter((item) => item.id !== character.id);
+  return withLog(
+    syncOrder({ ...state, characters }),
+    ctx,
+    "note",
+    `${character.name} leaves the company.`,
+  );
+}
+
+function assertUniqueName(state: TableState, character: Character): void {
+  const name = character.name.trim().toLowerCase();
+  if (!name) return;
+  const clash = state.characters.some(
+    (other) => other.id !== character.id && other.name.trim().toLowerCase() === name,
+  );
+  if (clash) {
+    throw new RuleError(`${character.name.trim()} is already at this table. Claim that sheet instead of adding another.`);
+  }
 }
 
 function addFoe(state: TableState, actor: Member, foe: TableState["foes"][number], ctx: ActionContext): TableState {
