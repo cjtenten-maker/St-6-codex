@@ -1,4 +1,7 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
+import type { EmailOtpType, SupabaseClient } from "@supabase/supabase-js";
+import { friendlySendError, prepareBrowserLocation, type AuthCallbackClient } from "../auth/callback";
+import { createEmailLinkClient, verifyEmailCode } from "../auth/email-link";
 import { companyForTable } from "../data/company";
 import type { Action, Character, Foe, LogEntry, Member, TableState } from "../model";
 import { RuleError } from "../rules/errors";
@@ -42,11 +45,32 @@ export function supabaseConfigured(): boolean {
 export function getSupabase(): SupabaseClient {
   if (!supabaseConfigured()) throw new RuleError("Supabase isn't configured.");
   if (!client) {
-    client = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-      auth: { persistSession: true, detectSessionInUrl: true, flowType: "pkce" },
-    });
+    if (typeof window !== "undefined") {
+      prepareBrowserLocation(window.location.href, (next) => {
+        window.history.replaceState(window.history.state, "", next);
+      });
+    }
+    client = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
   }
   return client;
+}
+
+export function authCallbackClient(): AuthCallbackClient {
+  const auth = getSupabase().auth;
+  return {
+    async setSession(tokens) {
+      const { error } = await auth.setSession(tokens);
+      return { error: error ? { message: error.message, code: error.code } : null };
+    },
+    async exchangeCodeForSession(code, flowId) {
+      const { error } = await auth.exchangeCodeForSession(code, flowId ? { flowId } : undefined);
+      return { error: error ? { message: error.message, code: error.code } : null };
+    },
+    async verifyOtp(args) {
+      const { error } = await auth.verifyOtp({ token_hash: args.token_hash, type: args.type as EmailOtpType });
+      return { error: error ? { message: error.message, code: error.code } : null };
+    },
+  };
 }
 
 function siteUrl(): string {
@@ -254,11 +278,36 @@ export function createSupabaseApi() {
     async signInEmail(email: string) {
       const clean = email.trim();
       if (!clean.includes("@")) throw new RuleError("That doesn't look like an email.");
-      const { error } = await getSupabase().auth.signInWithOtp({
+      try {
+        sessionStorage.setItem("st6-auth-email", clean);
+      } catch {
+        // Private mode can refuse storage. The link still sends.
+      }
+      const link = createEmailLinkClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+      const { error } = await link.auth.signInWithOtp({
         email: clean,
-        options: { emailRedirectTo: `${siteUrl()}/auth/callback` },
+        options: { emailRedirectTo: `${siteUrl()}/auth/callback`, shouldCreateUser: true },
       });
-      fail(error);
+      if (error) throw new RuleError(friendlySendError(error.message));
+    },
+    async signInWithCode(email: string, token: string) {
+      const cleanEmail = email.trim();
+      const cleanToken = token.replace(/\s+/g, "");
+      if (!cleanEmail.includes("@")) throw new RuleError("That doesn't look like an email.");
+      if (!/^\d{6,10}$/.test(cleanToken)) throw new RuleError("Enter the digits from the email.");
+      const auth = getSupabase().auth;
+      try {
+        await verifyEmailCode(
+          async (args) => {
+            const { error } = await auth.verifyOtp(args);
+            return { error: error ? { message: error.message, code: error.code } : null };
+          },
+          cleanEmail,
+          cleanToken,
+        );
+      } catch (error) {
+        throw new RuleError(error instanceof Error ? error.message : friendlySendError(""));
+      }
     },
     async signInGoogle() {
       const { error } = await getSupabase().auth.signInWithOAuth({
