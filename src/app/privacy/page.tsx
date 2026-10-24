@@ -23,7 +23,7 @@ export default function PrivacyPage() {
           Sign-in is by email magic link or Google, through Supabase. That is only so the table can tell players apart. There is no password.
         </p>
         <p className="mt-3">
-          We store your email, your display name, and the game data you put in the app: characters, tables, notes, and character portraits you upload. A portrait is visible to everyone at that table. The rest of a character sheet is visible only to that character's player and whoever is GM tonight.
+          We store your email, your display name, and the game data you put in the app: characters, tables, notes, character portraits, and pictures on saved trouble. A character portrait is visible to everyone at that table. The rest of a character sheet is visible only to that character's player and whoever is GM tonight. The Trouble library, including its pictures, is visible only to whoever is GM tonight.
         </p>
         <p className="mt-3">We do not sell or share that information. There are no ads and no tracking.</p>
         <p className="mt-3">The app is hosted on Vercel. Accounts and game data are hosted on Supabase.</p>

@@ -1,6 +1,6 @@
 # ST-6 Codex
 
-A mobile table for Corbin's ST-6 d12 system. Each player keeps a character on their own phone. Only that player and the current GM can open the sheet. Everyone else at the table sees the name, the portrait, whether they are seated, and whether they are down. One GM-eligible player takes the screen for the night, and the next GM inherits the private notes and the sheets.
+A mobile table for Corbin's ST-6 d12 system. Each player keeps a character on their own phone. Only that player and the current GM can open the sheet. Everyone else at the table sees the name, the portrait, whether they are seated, and whether they are down. One GM-eligible player takes the screen for the night. The next GM inherits the private notes, the sheets, and the table's Trouble library.
 
 You can play the local demo before any account exists. Supabase is what connects separate phones. Vercel is what hosts it.
 
@@ -23,10 +23,11 @@ Open [http://localhost:3000](http://localhost:3000).
 5. On Elowynne's sheet, add a portrait. Corbin's tab shows the photo next to her name.
 6. On Corbin's tab, tap **I'm GM tonight**. Naibroch sits out. Corbin can open Elowynne's sheet. The private note is on the GM screen. Trish does not see that note.
 7. Trish taps **I'm GM tonight**. Elowynne sits out, Naibroch stays out, and the note is now hers. Corbin can no longer open Elowynne. He can still open Naibroch if he claimed him.
+8. On the GM screen, open **Trouble**. The library has a few sample foes (Wolf, Bandit, Pit, Cult speaker, and others) in folders. **Add to scene** drops copies into the fight and leaves the saved original alone. When Trish takes the screen, that library is hers. Corbin does not see it until he is GM again.
 
 Justin is the third GM-eligible seat. A fourth person can be marked from the table. The company holds 48 characters and seats 12.
 
-The local demo shares one browser. Two tabs behave like two players. Two phones on two networks need the Supabase steps below. The demo hides other sheets and GM notes the same way the live table does. They are not encrypted on that computer: the full table is still in this browser's storage so the GM handoff can work. Supabase is what actually locks them. A portrait in the demo stays on this computer. On Supabase it is a file in the character-art bucket, and everyone at the table can see it.
+The local demo shares one browser. Two tabs behave like two players. Two phones on two networks need the Supabase steps below. The demo hides other sheets, GM notes, and the Trouble library the same way the live table does. They are not encrypted on that computer: the full table is still in this browser's storage so the GM handoff can work. Supabase is what actually locks them. A portrait in the demo stays on this computer. On Supabase a character portrait is a file in the character-art bucket, and everyone at the table can see it. A trouble picture stays in the trouble-art bucket, and only the current GM can see it.
 
 `npm test` runs the rules engine, the ten-character company, rests, seating, and the GM handoff.
 
@@ -47,6 +48,7 @@ The local demo shares one browser. Two tabs behave like two players. Two phones 
 - No initiative roll. The GM picks which side goes first. Players reorder themselves.
 - The GM's own characters sit out. Unclaimed sheets still sit out when the name on the paper matches the person who took the screen (Corbin, Trish, Justin Ratsprit). That name does not open the sheet. Only a claim, or holding the GM screen, does.
 - Other players see a character's name, portrait, whether they are seated, whether they are down (hit points at 0, not the number), and whether the sheet is claimed. They do not see who claimed it. Stats, tags, inventory, notes, abilities, weapons, spells, mana, armor class, and hero points stay with the owner and the current GM.
+- Trouble in the library (name, folder, hit points, AC, d12 bonus, damage, abilities, notes, and picture) is visible only to the current GM. A copy added to the scene becomes a normal foe. The saved original does not change. Past GMs do not keep the library while they are playing.
 - Rests, the new session, and trouble strikes touch seated characters only.
 
 Weapons, armor, shields, and the reference spell list are on the Rules page. Character spells keep the names from the sheets.
@@ -72,7 +74,7 @@ They belong to the table until someone taps Claim. Unexplained +2s (Emma's Chari
 
 ## Export and import
 
-On the table, **Export JSON** downloads the sheets you are allowed to open, plus trouble, the log, and the scene. GM notes are included only when you currently hold the screen. Other characters' sheets are left out. Importing a file that omitted them does not wipe notes already on the table.
+On the table, **Export JSON** downloads the sheets you are allowed to open, plus foes in the scene, the log, and the scene. GM notes and the Trouble library are included only when you currently hold the screen. Other characters' sheets are left out. Importing a file that omitted them does not wipe notes or the library already on the table.
 
 The file looks like `{ "format": "st6-codex", "version": 1, ... }`.
 
@@ -87,9 +89,9 @@ Only the **anon** key goes in the app. Do not paste the service role key anywher
 1. Go to [https://supabase.com](https://supabase.com) and create a free account.
 2. New project. Pick a name, a database password, and a region near you. Wait until it finishes provisioning.
 3. In the left sidebar open **SQL Editor → New query**.
-4. Paste the whole file `supabase/migrations/001_st6.sql` from this repo and run it. Then paste `supabase/migrations/002_character_privacy.sql` and run that too. You want "Success" at the bottom of each. If this project already ran 001, run only 002.
-5. Open **Database → Publications**. `supabase_realtime` should include `tables`, `table_members`, `gm_notes`, `characters`, `character_cards`, `foes`, and `log_entries`. The SQL adds them. If a notice said it skipped that step, toggle those tables on by hand.
-6. `002_character_privacy.sql` creates a private Storage bucket named `character-art` (5 MB, JPEG / PNG / WebP / GIF) and the policies on it. You do not create that bucket in the dashboard. The app downscales a photo to a JPEG before upload, including from the iPhone photo picker. Only the character's player and the current GM can change it, and only after the character is claimed. Everyone at the table can see it.
+4. Paste the whole file `supabase/migrations/001_st6.sql` from this repo and run it. Then paste `supabase/migrations/002_character_privacy.sql` and run that too. Then paste `supabase/migrations/003_trouble_library.sql`. You want "Success" at the bottom of each. If this project already ran 001 and 002, run only 003.
+5. Open **Database → Publications**. `supabase_realtime` should include `tables`, `table_members`, `gm_notes`, `characters`, `character_cards`, `foes`, `log_entries`, `trouble`, and `trouble_folders`. The SQL adds them. If a notice said it skipped that step, toggle those tables on by hand.
+6. `002_character_privacy.sql` creates a private Storage bucket named `character-art` (5 MB, JPEG / PNG / WebP / GIF) and the policies on it. `003_trouble_library.sql` creates a private bucket named `trouble-art` with the same limits. You do not create either bucket in the dashboard. The app downscales a photo to a JPEG before upload, including from the iPhone photo picker. Only the character's player and the current GM can change a portrait, and only after the character is claimed. Everyone at the table can see a character portrait. Only the current GM can see trouble art.
 
 ### 2. Turn on sign-in
 
@@ -158,7 +160,7 @@ The app is a PWA: `manifest.webmanifest`, icons, and a service worker in product
 These cannot be done from the repo. Everything else is already in the app.
 
 1. Create a Supabase account and a project.
-2. Run `supabase/migrations/001_st6.sql` in the SQL editor, then `supabase/migrations/002_character_privacy.sql`. The second file also creates the `character-art` bucket. Until 002 has been run, the live table will not open.
+2. Run `supabase/migrations/001_st6.sql` in the SQL editor, then `supabase/migrations/002_character_privacy.sql`, then `supabase/migrations/003_trouble_library.sql`. Those files also create the `character-art` and `trouble-art` buckets. Until 002 has been run, the live table will not open. The table still opens if 003 has not been run yet; the GM screen says the Trouble library is waiting, and adding a foe by hand still works.
 3. Copy the project URL and the anon key into `.env.local` and into Vercel.
 4. In Supabase, set the Site URL and the `/auth/callback` redirect to your Vercel domain (and to localhost if you test sign-in on your machine).
 5. Optional: create a Google OAuth client and paste its id and secret into Supabase's Google provider. The redirect there is `https://YOUR-PROJECT-REF.supabase.co/auth/v1/callback`.

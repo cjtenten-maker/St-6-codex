@@ -108,6 +108,36 @@ export type Foe = {
   notes: string;
   energyShield: boolean;
   ignoreAc?: number;
+  /** Copied from a library template. The file itself stays on the GM-only bucket. */
+  portraitPath?: string | null;
+};
+
+/** A folder in the table's Trouble library. Beasts, Bandits, Traps, Bosses. */
+export type TroubleFolder = {
+  id: string;
+  name: string;
+  sort: number;
+};
+
+/**
+ * A saved foe or hazard. Adding it to the scene copies these numbers onto a live foe.
+ * The template stays as it was. Trouble has no hero stat line: the GM sets the d12 bonus.
+ */
+export type Trouble = {
+  id: string;
+  folderId: string | null;
+  name: string;
+  /** Starting and maximum hit points for every copy added to the scene. */
+  hp: number;
+  ac: number;
+  attackBonus: number;
+  damage: string;
+  abilities: string;
+  notes: string;
+  energyShield: boolean;
+  ignoreAc?: number;
+  portraitPath?: string | null;
+  sort: number;
 };
 
 export type Member = {
@@ -151,6 +181,14 @@ export type TableState = {
   members: Member[];
   characters: Character[];
   foes: Foe[];
+  /** Saved trouble for this table. Only the current GM is shown this list. */
+  trouble: Trouble[];
+  troubleFolders: TroubleFolder[];
+  /**
+   * False when the live database has not applied migration 003 yet.
+   * The rest of the table still loads. The local demo omits it.
+   */
+  troubleReady?: boolean;
   log: LogEntry[];
 };
 
@@ -204,6 +242,12 @@ export type Action =
   | { type: "addFoe"; foe: Foe }
   | { type: "patchFoe"; foeId: string; patch: Partial<Omit<Foe, "id">> }
   | { type: "removeFoe"; foeId: string }
+  | { type: "saveFolder"; folder: TroubleFolder }
+  | { type: "removeFolder"; folderId: string }
+  | { type: "saveTrouble"; trouble: Trouble }
+  | { type: "removeTrouble"; troubleId: string }
+  | { type: "setTroubleArt"; troubleId: string; portraitPath: string | null }
+  | { type: "spawnTrouble"; troubleId: string; count: number }
   | { type: "setScene"; scene: string }
   | { type: "setGmNotes"; notes: string }
   | { type: "setSide"; side: "heroes" | "trouble" }
@@ -227,6 +271,10 @@ export type Action =
 export const SEAT_CAP = 12;
 export const COMPANY_CAP = 48;
 export const GM_CAP = 4;
+export const FOLDER_CAP = 24;
+export const TROUBLE_CAP = 80;
+/** How many copies one tap can put in the scene. */
+export const SPAWN_CAP = 12;
 
 export function statValue(character: Character, stat: StatName | "none"): number {
   if (stat === "none") return 0;

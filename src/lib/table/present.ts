@@ -1,4 +1,5 @@
 import type { Character, Member, TableState } from "../model";
+import { libraryOf } from "./library";
 
 /** The written name and the person holding the phone. "Justin" matches "Justin Ratsprit". */
 export function namesMatch(playerName: string, displayName: string): boolean {
@@ -97,9 +98,12 @@ function toPublicCard(character: Character): Character {
  */
 export function present(state: TableState, viewerId: string | null): TableState {
   const gm = Boolean(viewerId && state.table.currentGmId === viewerId);
+  const library = libraryOf(state);
   return {
     ...state,
     table: { ...state.table, gmNotes: gm ? state.table.gmNotes : "" },
+    trouble: gm ? library.trouble : [],
+    troubleFolders: gm ? library.troubleFolders : [],
     characters: state.characters.map((character) => {
       if (character.concealed) return character;
       if (gm || (viewerId != null && character.ownerId === viewerId)) {

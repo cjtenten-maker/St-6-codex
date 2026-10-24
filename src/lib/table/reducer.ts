@@ -1,8 +1,9 @@
-import type { Action, Character, CharacterPatch, LogEntry, LogKind, Member, TableState } from "../model";
-import { COMPANY_CAP, GM_CAP, SEAT_CAP } from "../model";
+import type { Action, Character, CharacterPatch, LogEntry, LogKind, Member, TableState, Trouble, TroubleFolder } from "../model";
+import { COMPANY_CAP, FOLDER_CAP, GM_CAP, SEAT_CAP, TROUBLE_CAP } from "../model";
 import { RuleError } from "../rules/errors";
 import { manaMaximum, spendMana } from "../rules/cast";
 import { HERO_CAP, HERO_START, awardHeroPoint, longRest, shortRest, spendHeroPoint } from "../rules/rest";
+import { enterLine, foeFromTrouble, instanceNames, libraryOf } from "./library";
 import { isClaimed, isOwnCharacter } from "./present";
 
 export type ActionContext = {
@@ -47,6 +48,18 @@ export function applyAction(state: TableState, action: Action, ctx: ActionContex
       return patchFoe(state, actor, action.foeId, action.patch);
     case "removeFoe":
       return removeFoe(state, actor, action.foeId, ctx);
+    case "saveFolder":
+      return saveFolder(state, actor, action.folder);
+    case "removeFolder":
+      return removeFolder(state, actor, action.folderId);
+    case "saveTrouble":
+      return saveTrouble(state, actor, action.trouble);
+    case "removeTrouble":
+      return removeTrouble(state, actor, action.troubleId);
+    case "setTroubleArt":
+      return setTroubleArt(state, actor, action.troubleId, action.portraitPath);
+    case "spawnTrouble":
+      return spawnTrouble(state, actor, action.troubleId, action.count, ctx);
     case "setScene":
       return setScene(state, actor, action.scene);
     case "setGmNotes":
@@ -274,6 +287,124 @@ function removeFoe(state: TableState, actor: Member, foeId: string, ctx: ActionC
     "note",
     `${foe.name} leaves the scene.`,
   );
+}
+
+function saveFolder(state: TableState, actor: Member, folder: TroubleFolder): TableState {
+  assertGm(state, actor);
+  const { troubleFolders } = libraryOf(state);
+  const name = folder.name.trim();
+  if (!name) throw new RuleError("Name the folder.");
+  if (name.length > 40) throw new RuleError("That folder name is too long.");
+  const clash = troubleFolders.some((item) => item.id !== folder.id && item.name.toLowerCase() === name.toLowerCase());
+  if (clash) throw new RuleError("That folder is already in the library.");
+  const existing = troubleFolders.find((item) => item.id === folder.id);
+  if (!existing && troubleFolders.length >= FOLDER_CAP) throw new RuleError("The library has enough folders.");
+  const next: TroubleFolder = { id: folder.id, name, sort: existing?.sort ?? troubleFolders.length };
+  const folders = existing
+    ? troubleFolders.map((item) => (item.id === folder.id ? next : item))
+    : [...troubleFolders, next];
+  return { ...state, troubleFolders: folders, trouble: libraryOf(state).trouble };
+}
+
+function removeFolder(state: TableState, actor: Member, folderId: string): TableState {
+  assertGm(state, actor);
+  const { trouble, troubleFolders } = libraryOf(state);
+  if (!troubleFolders.some((folder) => folder.id === folderId)) return state;
+  return {
+    ...state,
+    troubleFolders: troubleFolders.filter((folder) => folder.id !== folderId),
+    trouble: trouble.map((item) => (item.folderId === folderId ? { ...item, folderId: null } : item)),
+  };
+}
+
+function saveTrouble(state: TableState, actor: Member, trouble: Trouble): TableState {
+  assertGm(state, actor);
+  const { trouble: saved, troubleFolders } = libraryOf(state);
+  const next = cleanTrouble(trouble, troubleFolders);
+  const existing = saved.find((item) => item.id === next.id);
+  if (!existing && saved.length >= TROUBLE_CAP) throw new RuleError("The library is full.");
+  if (!existing) next.sort = saved.length;
+  else next.sort = existing.sort;
+  next.portraitPath = existing?.portraitPath ?? next.portraitPath ?? null;
+  const list = existing ? saved.map((item) => (item.id === next.id ? next : item)) : [...saved, next];
+  return { ...state, trouble: list, troubleFolders };
+}
+
+function removeTrouble(state: TableState, actor: Member, troubleId: string): TableState {
+  assertGm(state, actor);
+  const { trouble, troubleFolders } = libraryOf(state);
+  return {
+    ...state,
+    troubleFolders,
+    trouble: trouble.filter((item) => item.id !== troubleId),
+  };
+}
+
+function setTroubleArt(state: TableState, actor: Member, troubleId: string, portraitPath: string | null): TableState {
+  assertGm(state, actor);
+  const { trouble, troubleFolders } = libraryOf(state);
+  const item = trouble.find((entry) => entry.id === troubleId);
+  if (!item) throw new RuleError("Save the trouble before adding a picture.");
+  return {
+    ...state,
+    troubleFolders,
+    trouble: trouble.map((entry) => (entry.id === troubleId ? { ...entry, portraitPath } : entry)),
+  };
+}
+
+function spawnTrouble(state: TableState, actor: Member, troubleId: string, count: number, ctx: ActionContext): TableState {
+  assertGm(state, actor);
+  const { trouble, troubleFolders } = libraryOf(state);
+  const template = trouble.find((item) => item.id === troubleId);
+  if (!template) throw new RuleError("That trouble isn't in the library.");
+  const names = instanceNames(template.name, count, state.foes.map((foe) => foe.name));
+  const foes = [
+    ...state.foes,
+    ...names.map((name) => foeFromTrouble(template, takeId(ctx), name)),
+  ];
+  return withLog({ ...state, foes, trouble, troubleFolders }, ctx, "note", enterLine(names));
+}
+
+function cleanTrouble(trouble: Trouble, folders: TroubleFolder[]): Trouble {
+  const name = trouble.name.trim();
+  if (!name) throw new RuleError("Give the trouble a name.");
+  if (name.length > 80) throw new RuleError("That name is too long.");
+  const hp = Math.floor(Number(trouble.hp));
+  if (!Number.isFinite(hp) || hp < 1 || hp > 9999) throw new RuleError("Hit points need to be at least 1.");
+  const ac = Math.floor(Number(trouble.ac));
+  if (!Number.isFinite(ac) || ac < 0 || ac > 99) throw new RuleError("Armor class needs to be from 0 to 99.");
+  const attackBonus = Math.floor(Number(trouble.attackBonus));
+  if (!Number.isFinite(attackBonus) || attackBonus < -30 || attackBonus > 40) {
+    throw new RuleError("The attack bonus is what you add to the d12.");
+  }
+  const damage = (trouble.damage || "").trim() || "1d6";
+  if (damage.length > 40) throw new RuleError("Keep the damage line short, like 2d6+3.");
+  const abilities = (trouble.abilities || "").trim();
+  const notes = (trouble.notes || "").trim();
+  if (abilities.length > 2000 || notes.length > 2000) throw new RuleError("That note is too long.");
+  if (trouble.folderId && !folders.some((folder) => folder.id === trouble.folderId)) {
+    throw new RuleError("That folder isn't in the library.");
+  }
+  let ignoreAc: number | undefined;
+  if (trouble.ignoreAc != null && `${trouble.ignoreAc}` !== "") {
+    ignoreAc = Math.floor(Number(trouble.ignoreAc));
+    if (!Number.isFinite(ignoreAc) || ignoreAc < 0 || ignoreAc > 30) throw new RuleError("Ignore AC needs to be from 0 to 30.");
+  }
+  return {
+    id: trouble.id,
+    folderId: trouble.folderId,
+    name,
+    hp,
+    ac,
+    attackBonus,
+    damage,
+    abilities,
+    notes,
+    energyShield: Boolean(trouble.energyShield),
+    ignoreAc,
+    portraitPath: trouble.portraitPath ?? null,
+    sort: Number.isFinite(trouble.sort) ? trouble.sort : 0,
+  };
 }
 
 function setScene(state: TableState, actor: Member, scene: string): TableState {

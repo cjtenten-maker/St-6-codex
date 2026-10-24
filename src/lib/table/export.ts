@@ -1,5 +1,6 @@
 import { COMPANY_CAP, SEAT_CAP, type Character, type TableState } from "../model";
 import { RuleError } from "../rules/errors";
+import { libraryOf } from "./library";
 
 export type CodexFile = {
   format: "st6-codex";
@@ -18,10 +19,14 @@ function sheetForExport(character: Character): Character {
 }
 
 export function exportTable(state: TableState, includeGmNotes: boolean, now = new Date().toISOString()): string {
+  const library = libraryOf(state);
   const visible: TableState = {
     ...state,
     table: { ...state.table, gmNotes: includeGmNotes ? state.table.gmNotes : "" },
     characters: state.characters.filter((character) => !character.concealed).map(sheetForExport),
+    trouble: includeGmNotes ? library.trouble : [],
+    troubleFolders: includeGmNotes ? library.troubleFolders : [],
+    troubleReady: undefined,
   };
   const file: CodexFile = {
     format: "st6-codex",
@@ -52,6 +57,9 @@ export function parseCodexFile(raw: string): CodexFile {
   if (state.characters.length > COMPANY_CAP) throw new RuleError("A company holds at most 48 characters.");
   const seated = state.characters.filter((character) => character.seated).length;
   if (seated > SEAT_CAP) throw new RuleError("A table seats at most 12.");
+  const library = libraryOf(state);
+  state.trouble = library.trouble;
+  state.troubleFolders = library.troubleFolders;
   return {
     format: "st6-codex",
     version: 1,

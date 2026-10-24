@@ -9,6 +9,7 @@ import { isOwnCharacter } from "@/lib/table/present";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
 import { Portrait } from "./Portrait";
+import { TroubleLibrary } from "./TroubleLibrary";
 import { Banner, Button, Card, Kicker, TextField, Area } from "./ui";
 
 export function GmScreen({ code }: { code: string }) {
@@ -196,6 +197,8 @@ export function GmScreen({ code }: { code: string }) {
         <div>
           <section className="mt-6 lg:mt-0">
             <h2 className="font-display text-2xl">Trouble</h2>
+            <TroubleLibrary table={table} />
+            <h3 className="mt-6 font-display text-xl">In the scene</h3>
             <div className="mt-2 grid gap-2">
               {state.foes.length === 0 ? <p className="text-sm text-mute">No foe in the scene yet.</p> : null}
               {state.foes.map((foe) => (
@@ -296,12 +299,16 @@ function FoeCard({
   return (
     <Card>
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="text-lg leading-tight">{foe.name}</h3>
-          <p className="text-sm text-mute">AC {foe.ac} · d12+{foe.attackBonus} · {foe.damage}{foe.energyShield ? " · shield" : ""}</p>
+        <div className="flex min-w-0 items-start gap-3">
+          <Portrait path={foe.portraitPath} name={foe.name} bucket="trouble-art" />
+          <div>
+            <h3 className="text-lg leading-tight">{foe.name}</h3>
+            <p className="text-sm text-mute">AC {foe.ac} · d12+{foe.attackBonus} · {foe.damage}{foe.energyShield ? " · shield" : ""}</p>
+          </div>
         </div>
         <Button tone="quiet" onClick={onRemove}>Remove</Button>
       </div>
+      {foe.notes ? <p className="mt-2 whitespace-pre-wrap text-sm">{foe.notes}</p> : null}
       <div className="mt-2 flex items-center gap-2">
         <Button tone="ghost" className="min-h-9 px-3" onClick={() => onChange({ hp: Math.max(0, foe.hp - 1) })}>−</Button>
         <span className="num">{foe.hp}/{foe.hpMax}</span>
