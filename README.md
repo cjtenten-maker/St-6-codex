@@ -130,7 +130,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
 5. Stop the dev server and start it again (`npm run dev`). The home page should ask for email instead of Corbin / Trish / Justin.
-6. Sign in, create a table, leave **Seat the ten characters from the sheets** checked, and send the invite code. The other phone opens the same URL, signs in, and joins with that code.
+6. Sign in. The person opening the table uses **Create a new table instead**, leaves **Seat the ten characters from the sheets** checked, and sends the invite code. Every other phone joins with that code. Creating another table, or importing the roster, starts a separate table even when the name matches. The header shows the code and who has the GM screen, or who opened the table.
 7. There is a link on the sign-in card, **Use the local demo on this device instead**, if you want the no-account table back on that browser. It does not talk to Supabase.
 
 ## Deploy to Vercel

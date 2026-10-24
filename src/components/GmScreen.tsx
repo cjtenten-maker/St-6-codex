@@ -10,6 +10,7 @@ import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
 import { Portrait } from "./Portrait";
 import { TroubleLibrary } from "./TroubleLibrary";
+import { TableBanner } from "./TableBanner";
 import { Banner, Button, Card, Kicker, TextField, Area } from "./ui";
 
 export function GmScreen({ code }: { code: string }) {
@@ -45,6 +46,7 @@ export function GmScreen({ code }: { code: string }) {
   if (!isGm) {
     return (
       <Frame code={state.table.code}>
+        <TableBanner state={state} />
         <Kicker>GM screen</Kicker>
         <h1 className="font-display text-4xl">Behind the screen</h1>
         {gm ? <p className="mt-3">{gm.displayName} has it tonight.</p> : <p className="mt-3 text-mute">Nobody has taken it.</p>}
@@ -101,6 +103,7 @@ export function GmScreen({ code }: { code: string }) {
     <Frame code={state.table.code}>
       <div className="lg:grid lg:grid-cols-2 lg:gap-6">
         <div>
+          <TableBanner state={state} />
           <Kicker>You have the screen</Kicker>
           <h1 className="font-display text-4xl">GM</h1>
           <p className="mt-1 text-sm text-mute">Your own characters sit this one out. The notes stay for the next GM.</p>

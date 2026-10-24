@@ -10,6 +10,7 @@ import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
 import { Portrait, PortraitControls } from "./Portrait";
 import { Roller } from "./Roller";
+import { TableBanner } from "./TableBanner";
 import { Banner, Button, Card, Kicker, Meter, Pips, TextField, Area } from "./ui";
 
 const STATS: { key: StatName; label: string }[] = [
@@ -77,6 +78,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         <Link href={`/t/${state.table.code}`} className="text-sm text-mute">
           ← {state.table.name}
         </Link>
+        <TableBanner state={state} />
         <header className="mt-2">
           <Kicker>{character.seated ? "Seated" : "Sitting out"}{character.down ? " · Down" : ""}</Kicker>
           <h1 className="font-display text-4xl font-medium leading-tight">{character.name}</h1>
@@ -130,6 +132,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
       <Link href={`/t/${state.table.code}`} className="text-sm text-mute">
         ← {state.table.name}
       </Link>
+      <TableBanner state={state} />
       <header className="mt-2">
         <Kicker>
           {character.seated ? "Seated" : "Sitting out"}

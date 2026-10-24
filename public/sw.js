@@ -1,4 +1,4 @@
-const CACHE = "st6-codex-v5";
+const CACHE = "st6-codex-v6";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["/", "/manifest.webmanifest"])));

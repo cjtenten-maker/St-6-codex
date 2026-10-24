@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
+import { TableBanner } from "./TableBanner";
 import { Kicker } from "./ui";
 
 const LABEL: Record<string, string> = {
@@ -25,6 +26,7 @@ export function LogScreen({ code }: { code: string }) {
   const entries = [...state.log].reverse();
   return (
     <Frame code={state.table.code}>
+      <TableBanner state={state} />
       <Kicker>Session log</Kicker>
       <h1 className="font-display text-4xl">What happened</h1>
       <p className="mt-1 text-sm text-mute">Rolls, harm, spells, and advances. {state.table.sessionActive ? "This session is open." : "Between sessions."}</p>
