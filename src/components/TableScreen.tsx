@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCodex, useTable } from "./CodexProvider";
 import { Creator } from "./Creator";
 import { Frame } from "./Nav";
+import type { Character, Member } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
 import { manaMaximum } from "@/lib/rules";
+import { isClaimed } from "@/lib/table/present";
+import { Portrait } from "./Portrait";
 import { Banner, Button, Card, Kicker, Meter, Pips } from "./ui";
 
 export function TableScreen({ code }: { code: string }) {
@@ -15,6 +18,19 @@ export function TableScreen({ code }: { code: string }) {
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const { state, viewer } = table;
+
+  useEffect(() => {
+    if (!state || !viewer) return;
+    const key = `st6-sheet-${state.table.code}`;
+    const saved = sessionStorage.getItem(key);
+    const savedCharacter = saved ? state.characters.find((character) => character.id === saved) : undefined;
+    if (saved && (!savedCharacter || savedCharacter.concealed)) {
+      const own = state.characters.find((character) => character.ownerId === viewer.id);
+      if (own) sessionStorage.setItem(key, own.id);
+      else sessionStorage.removeItem(key);
+      window.dispatchEvent(new Event("st6-sheet"));
+    }
+  }, [state, viewer]);
 
   if (!codex.ready || !viewer) return <Frame><p className="text-mute">Taking your seat…</p></Frame>;
   if (table.missing) {
@@ -97,20 +113,35 @@ export function TableScreen({ code }: { code: string }) {
         <ol className="mt-3 grid gap-2">
           {seated.map((character, index) => {
             if (!character) return null;
-            const owned = character.ownerId === viewer.id || character.ownerId === null || isGm;
+            const canMove = isGm || character.ownerId === viewer.id || !isClaimed(character);
+            const open = !character.concealed;
+            const identity = (
+              <span className="flex min-w-0 flex-1 items-center gap-3">
+                <Portrait path={character.portraitPath} name={character.name} />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{character.name}</span>
+                  <span className="text-xs text-mute">
+                    {open
+                      ? `HP ${character.hp}/${character.hpMax} · Mana ${character.mana}/${manaMaximum(character.arcana)} · AC ${effectiveAc(character)}`
+                      : publicLine(character)}
+                  </span>
+                </span>
+              </span>
+            );
             return (
               <li key={character.id} className="flex items-center gap-2 rounded-2xl border border-line bg-panel px-3 py-2">
                 <span className="num w-6 text-mute">{index + 1}</span>
-                <Link href={`/t/${state.table.code}/c/${character.id}`} className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{character.name}</span>
-                  <span className="text-xs text-mute">
-                    HP {character.hp}/{character.hpMax} · Mana {character.mana}/{manaMaximum(character.arcana)} · AC {effectiveAc(character)}
-                  </span>
-                </Link>
+                {open ? (
+                  <Link href={`/t/${state.table.code}/c/${character.id}`} className="min-w-0 flex-1">
+                    {identity}
+                  </Link>
+                ) : (
+                  <div className="min-w-0 flex-1">{identity}</div>
+                )}
                 <button
                   className="min-h-11 min-w-11 text-mute disabled:opacity-30"
                   type="button"
-                  disabled={!owned || index === 0}
+                  disabled={!canMove || index === 0}
                   aria-label={`Move ${character.name} up`}
                   onClick={() => act(() => table.dispatch({ type: "moveTurn", characterId: character.id, direction: -1 }))}
                 >
@@ -119,7 +150,7 @@ export function TableScreen({ code }: { code: string }) {
                 <button
                   className="min-h-11 min-w-11 text-mute disabled:opacity-30"
                   type="button"
-                  disabled={!owned || index === seated.length - 1}
+                  disabled={!canMove || index === seated.length - 1}
                   aria-label={`Move ${character.name} down`}
                   onClick={() => act(() => table.dispatch({ type: "moveTurn", characterId: character.id, direction: 1 }))}
                 >
@@ -133,31 +164,44 @@ export function TableScreen({ code }: { code: string }) {
 
       <section className="mt-6 grid gap-3">
         <h2 className="font-display text-2xl">Seated</h2>
-        {state.characters.filter((character) => character.seated).map((character) => (
-          <Link key={character.id} href={`/t/${state.table.code}/c/${character.id}`} className="block">
+        {state.characters.filter((character) => character.seated).map((character) => {
+          const card = (
             <Card>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-display text-2xl leading-none">{character.name}</h3>
-                  <p className="mt-1 text-sm text-mute">
-                    {ownerLabel(character.ownerId, character.playerName, state.members)}
-                    {character.hp === 0 ? " · Down" : ""}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="num text-2xl leading-none">AC {effectiveAc(character)}</p>
-                  <div className="mt-2 flex justify-end">
-                    <Pips value={character.heroPoints} />
+              <div className="flex items-start gap-3">
+                <Portrait path={character.portraitPath} name={character.name} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-2xl leading-none">{character.name}</h3>
+                      <p className="mt-1 text-sm text-mute">{faceLine(character, state.members)}</p>
+                    </div>
+                    {character.concealed ? null : (
+                      <div className="text-right">
+                        <p className="num text-2xl leading-none">AC {effectiveAc(character)}</p>
+                        <div className="mt-2 flex justify-end">
+                          <Pips value={character.heroPoints} />
+                        </div>
+                      </div>
+                    )}
                   </div>
+                  {character.concealed ? null : (
+                    <div className="mt-3 grid gap-2">
+                      <Meter label="HP" value={character.hp} max={character.hpMax} tone="hp" />
+                      <Meter label="Mana" value={character.mana} max={manaMaximum(character.arcana)} tone="mana" />
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="mt-3 grid gap-2">
-                <Meter label="HP" value={character.hp} max={character.hpMax} tone="hp" />
-                <Meter label="Mana" value={character.mana} max={manaMaximum(character.arcana)} tone="mana" />
               </div>
             </Card>
-          </Link>
-        ))}
+          );
+          return character.concealed ? (
+            <div key={character.id}>{card}</div>
+          ) : (
+            <Link key={character.id} href={`/t/${state.table.code}/c/${character.id}`} className="block">
+              {card}
+            </Link>
+          );
+        })}
       </section>
 
       <section className="mt-6">
@@ -168,27 +212,38 @@ export function TableScreen({ code }: { code: string }) {
           </Button>
         </div>
         <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line">
-          {state.characters.map((character) => (
-            <li key={character.id} className="flex items-center gap-3 bg-panel/70 px-3 py-3">
-              <Link href={`/t/${state.table.code}/c/${character.id}`} className="min-w-0 flex-1">
-                <span className="block truncate">{character.name}</span>
-                <span className="text-xs text-mute">
-                  {character.seated ? "Seated" : "Sat out"}
-                  {" · "}
-                  {ownerLabel(character.ownerId, character.playerName, state.members)}
+          {state.characters.map((character) => {
+            const claimed = isClaimed(character);
+            const identity = (
+              <span className="flex min-w-0 flex-1 items-center gap-3">
+                <Portrait path={character.portraitPath} name={character.name} />
+                <span className="min-w-0">
+                  <span className="block truncate">{character.name}</span>
+                  <span className="text-xs text-mute">{faceLine(character, state.members)}</span>
                 </span>
-              </Link>
-              {character.ownerId === null ? (
-                <Button tone="ghost" className="min-h-9 px-3 text-sm" onClick={() => act(() => table.dispatch({ type: "claim", characterId: character.id }))}>
-                  Claim
-                </Button>
-              ) : character.ownerId === viewer.id ? (
-                <Button tone="quiet" className="min-h-9 px-2 text-sm" onClick={() => act(() => table.dispatch({ type: "release", characterId: character.id }))}>
-                  Release
-                </Button>
-              ) : null}
-            </li>
-          ))}
+              </span>
+            );
+            return (
+              <li key={character.id} className="flex items-center gap-3 bg-panel/70 px-3 py-3">
+                {character.concealed ? (
+                  identity
+                ) : (
+                  <Link href={`/t/${state.table.code}/c/${character.id}`} className="min-w-0 flex-1">
+                    {identity}
+                  </Link>
+                )}
+                {!claimed ? (
+                  <Button tone="ghost" className="min-h-9 px-3 text-sm" onClick={() => act(() => table.dispatch({ type: "claim", characterId: character.id }))}>
+                    Claim
+                  </Button>
+                ) : character.ownerId === viewer.id ? (
+                  <Button tone="quiet" className="min-h-9 px-2 text-sm" onClick={() => act(() => table.dispatch({ type: "release", characterId: character.id }))}>
+                    Release
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       </section>
 
@@ -270,6 +325,18 @@ export function TableScreen({ code }: { code: string }) {
       ) : null}
     </Frame>
   );
+}
+
+function publicLine(character: Character): string {
+  return [character.seated ? "Seated" : "Sitting out", character.down ? "Down" : null, character.claimed ? "Claimed" : "Unclaimed"]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function faceLine(character: Character, members: Member[]): string {
+  if (character.concealed) return publicLine(character);
+  const who = ownerLabel(character.ownerId, character.playerName, members);
+  return character.hp <= 0 ? `${who} · Down` : who;
 }
 
 function ownerLabel(

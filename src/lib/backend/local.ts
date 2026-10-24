@@ -120,7 +120,8 @@ export function createLocalApi(store: Store) {
     },
     exportJson(code: string): string {
       const full = readFull(code);
-      return exportTable(full, true);
+      const include = Boolean(viewer && full.table.currentGmId === viewer.id);
+      return exportTable(present(full, viewer?.id ?? null), include);
     },
     importJson(raw: string): string {
       const who = requireViewer();

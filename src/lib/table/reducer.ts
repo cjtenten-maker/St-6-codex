@@ -3,7 +3,7 @@ import { COMPANY_CAP, GM_CAP, SEAT_CAP } from "../model";
 import { RuleError } from "../rules/errors";
 import { manaMaximum, spendMana } from "../rules/cast";
 import { HERO_CAP, HERO_START, awardHeroPoint, longRest, shortRest, spendHeroPoint } from "../rules/rest";
-import { isOwnCharacter } from "./present";
+import { isClaimed, isOwnCharacter } from "./present";
 
 export type ActionContext = {
   actorId: string;
@@ -21,6 +21,8 @@ export function applyAction(state: TableState, action: Action, ctx: ActionContex
       return release(state, actor, action.characterId, ctx);
     case "patchCharacter":
       return patchCharacter(state, actor, action.characterId, action.patch);
+    case "setPortrait":
+      return setPortrait(state, actor, action.characterId, action.portraitPath);
     case "setEligible":
       return setEligible(state, actor, action.memberIds);
     case "claimGm":
@@ -58,7 +60,7 @@ export function applyAction(state: TableState, action: Action, ctx: ActionContex
     case "spendMana":
       return spendManaAction(state, actor, action.characterId, action.amount);
     case "grantCover":
-      return grantCover(state, action.characterIds, action.tempAc, ctx);
+      return grantCover(state, actor, action.characterIds, action.tempAc, ctx);
     case "spendHero":
       return spendHero(state, actor, action.characterId, action.reason, ctx);
     case "awardHero":
@@ -79,7 +81,7 @@ function join(state: TableState, member: Member): TableState {
 
 function claim(state: TableState, actor: Member, characterId: string, ctx: ActionContext): TableState {
   const character = requireCharacter(state, characterId);
-  if (character.ownerId && character.ownerId !== actor.id) {
+  if (isClaimed(character) && character.ownerId !== actor.id) {
     throw new RuleError(`${character.name} is already claimed.`);
   }
   if (character.ownerId === actor.id) return state;
@@ -103,6 +105,16 @@ function release(state: TableState, actor: Member, characterId: string, ctx: Act
     "note",
     `${character.name} belongs to the table again.`,
   );
+}
+
+function setPortrait(state: TableState, actor: Member, characterId: string, portraitPath: string | null): TableState {
+  const character = requireCharacter(state, characterId);
+  if (character.concealed) throw new RuleError("That sheet is private.");
+  if (!character.ownerId) throw new RuleError("Claim the character before adding a portrait.");
+  if (!isGm(state, actor) && character.ownerId !== actor.id) {
+    throw new RuleError("Only the player or the GM can change the portrait.");
+  }
+  return mapCharacter(state, characterId, (current) => ({ ...current, portraitPath }));
 }
 
 function patchCharacter(state: TableState, actor: Member, characterId: string, patch: CharacterPatch): TableState {
@@ -287,7 +299,7 @@ function setSide(state: TableState, actor: Member, side: "heroes" | "trouble", c
 function moveTurn(state: TableState, actor: Member, characterId: string, direction: -1 | 1): TableState {
   const character = requireCharacter(state, characterId);
   if (!character.seated) throw new RuleError(`${character.name} isn't seated.`);
-  const canMove = isGm(state, actor) || character.ownerId === actor.id || character.ownerId === null;
+  const canMove = isGm(state, actor) || character.ownerId === actor.id || !isClaimed(character);
   if (!canMove) throw new RuleError("Players reorder themselves. The GM can reorder anyone.");
   const order = syncOrder(state).table.turnOrder;
   const index = order.indexOf(characterId);
@@ -324,7 +336,7 @@ function applyHarm(
   if (action.onlySeated && !character.seated) {
     throw new RuleError("Trouble only reaches heroes who are seated.");
   }
-  if (action.direction === "harm") assertCanEdit(state, actor, character);
+  assertCanEdit(state, actor, character);
   const hp =
     action.direction === "heal"
       ? Math.min(character.hpMax, character.hp + amount)
@@ -341,10 +353,14 @@ function applyHarm(
   );
 }
 
-function grantCover(state: TableState, characterIds: string[], tempAc: number, ctx: ActionContext): TableState {
+function grantCover(state: TableState, actor: Member, characterIds: string[], tempAc: number, ctx: ActionContext): TableState {
   const amount = Math.max(0, Math.floor(tempAc));
   const wanted = new Set(characterIds);
   const covered: string[] = [];
+  for (const character of state.characters) {
+    if (!wanted.has(character.id) || !character.seated) continue;
+    assertCanEdit(state, actor, character);
+  }
   const characters = state.characters.map((character) => {
     if (!wanted.has(character.id) || !character.seated) return character;
     covered.push(character.name);
@@ -375,7 +391,7 @@ function spendHero(
   ctx: ActionContext,
 ): TableState {
   const character = requireCharacter(state, characterId);
-  if (character.ownerId && character.ownerId !== actor.id) {
+  if (character.concealed || (character.ownerId && character.ownerId !== actor.id)) {
     throw new RuleError("Hero points are the player's to spend.");
   }
   let nextPoints: number;
@@ -493,8 +509,9 @@ function requireCharacter(state: TableState, characterId: string): Character {
 }
 
 function assertCanEdit(state: TableState, actor: Member, character: Character): void {
+  if (character.concealed) throw new RuleError(`${character.name}'s sheet is private.`);
   if (isGm(state, actor)) return;
-  if (character.ownerId === null || character.ownerId === actor.id) return;
+  if (character.ownerId === actor.id) return;
   throw new RuleError(`${character.name} is played by someone else.`);
 }
 

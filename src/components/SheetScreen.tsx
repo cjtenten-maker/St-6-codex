@@ -8,6 +8,7 @@ import { effectiveAc } from "@/lib/model";
 import { manaMaximum } from "@/lib/rules";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
+import { Portrait, PortraitControls } from "./Portrait";
 import { Roller } from "./Roller";
 import { Banner, Button, Card, Kicker, Meter, Pips, TextField, Area } from "./ui";
 
@@ -29,11 +30,22 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
   const [roll, setRoll] = useState<Roll | null>(null);
   const [amending, setAmending] = useState(false);
   const [advance, setAdvance] = useState("");
+  const [portraitBusy, setPortraitBusy] = useState(false);
   const { state, viewer } = table;
   const character = state?.characters.find((item) => item.id === id);
 
   useEffect(() => {
-    if (character) sessionStorage.setItem(`st6-sheet-${code.toUpperCase()}`, character.id);
+    if (!character) return;
+    const key = `st6-sheet-${code.toUpperCase()}`;
+    if (character.concealed) {
+      if (sessionStorage.getItem(key) === character.id) {
+        sessionStorage.removeItem(key);
+        window.dispatchEvent(new Event("st6-sheet"));
+      }
+      return;
+    }
+    sessionStorage.setItem(key, character.id);
+    window.dispatchEvent(new Event("st6-sheet"));
   }, [character, code]);
 
   if (!codex.ready || !viewer) return <Frame><p className="text-mute">Taking your seat…</p></Frame>;
@@ -47,15 +59,49 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
     );
   }
 
-  const canEdit = state.table.currentGmId === viewer.id || character.ownerId === null || character.ownerId === viewer.id;
-  const canSpend = character.ownerId === null || character.ownerId === viewer.id;
+  const act = (work: () => Promise<unknown>) => {
+    void work().catch(() => undefined);
+  };
+
+  if (character.concealed) {
+    return (
+      <Frame code={state.table.code}>
+        <Link href={`/t/${state.table.code}`} className="text-sm text-mute">
+          ← {state.table.name}
+        </Link>
+        <header className="mt-2">
+          <Kicker>{character.seated ? "Seated" : "Sitting out"}{character.down ? " · Down" : ""}</Kicker>
+          <h1 className="font-display text-4xl font-medium leading-tight">{character.name}</h1>
+          <p className="mt-2 text-mute">This sheet is private.</p>
+        </header>
+        <Portrait path={character.portraitPath} name={character.name} size="lg" />
+        {table.error ? <p className="mt-3 text-sm text-hp">{table.error}</p> : null}
+        {!character.claimed ? (
+          <Button className="mt-4" onClick={() => act(() => table.dispatch({ type: "claim", characterId: character.id }))}>
+            Claim
+          </Button>
+        ) : null}
+      </Frame>
+    );
+  }
+
+  const isGm = state.table.currentGmId === viewer.id;
+  const canEdit = isGm || character.ownerId === viewer.id;
+  const canSpend = character.ownerId === viewer.id || (isGm && character.ownerId === null);
+  const canPortrait = canEdit && character.ownerId !== null;
+  const editableHeroes = state.characters.filter((hero) => !hero.concealed && (isGm || hero.ownerId === viewer.id));
   const manaMax = manaMaximum(character.arcana);
   const ac = effectiveAc(character);
   const weapons = withUnarmed(character.weapons);
   const owner = state.members.find((member) => member.id === character.ownerId);
 
-  const act = (work: () => Promise<unknown>) => {
-    void work().catch(() => undefined);
+  const pickPortrait = async (file: File) => {
+    setPortraitBusy(true);
+    try {
+      await table.setPortrait(character.id, file);
+    } finally {
+      setPortraitBusy(false);
+    }
   };
 
   const bump = (direction: "harm" | "heal", amount = 1) =>
@@ -82,6 +128,22 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           {character.role ? ` · ${character.role}` : ""}
         </Kicker>
         <h1 className="font-display text-4xl font-medium leading-tight">{character.name}</h1>
+        <Portrait path={character.portraitPath} name={character.name} size="lg" />
+        {canPortrait ? (
+          <PortraitControls
+            path={character.portraitPath}
+            busy={portraitBusy}
+            onPick={pickPortrait}
+            onRemove={async () => {
+              setPortraitBusy(true);
+              try {
+                await table.setPortrait(character.id, null);
+              } finally {
+                setPortraitBusy(false);
+              }
+            }}
+          />
+        ) : null}
         <p className="mt-1 text-sm text-mute">
           {owner ? `Played by ${owner.displayName}` : character.playerName ? `Sheet says ${character.playerName}` : "Unclaimed"}
           {character.playerName && owner ? ` · sheet says ${character.playerName}` : ""}
@@ -316,7 +378,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           weapon={roll.kind === "attack" ? roll.weapon : undefined}
           spell={roll.kind === "cast" ? roll.spell : undefined}
           foes={state.foes}
-          heroes={state.characters}
+          heroes={editableHeroes}
           canSpend={canSpend}
           dispatch={table.dispatch}
           onClose={() => setRoll(null)}

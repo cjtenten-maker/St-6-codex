@@ -8,6 +8,7 @@ import { outcomeLabel, resolveAttack } from "@/lib/rules";
 import { isOwnCharacter } from "@/lib/table/present";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
+import { Portrait } from "./Portrait";
 import { Banner, Button, Card, Kicker, TextField, Area } from "./ui";
 
 export function GmScreen({ code }: { code: string }) {
@@ -164,10 +165,13 @@ export function GmScreen({ code }: { code: string }) {
                 const mine = isOwnCharacter(me, character);
                 return (
                   <li key={character.id} className="flex items-center justify-between gap-2 rounded-xl border border-line px-3 py-2">
-                    <span className="min-w-0 truncate">
-                      {character.name}
-                      {mine ? <span className="text-mute"> · yours, sitting out</span> : null}
-                      {!character.seated && !mine ? <span className="text-mute"> · sat out</span> : null}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Portrait path={character.portraitPath} name={character.name} />
+                      <span className="min-w-0 truncate">
+                        {character.name}
+                        {mine ? <span className="text-mute"> · yours, sitting out</span> : null}
+                        {!character.seated && !mine ? <span className="text-mute"> · sat out</span> : null}
+                      </span>
                     </span>
                     <Button
                       tone={character.seated ? "brass" : "ghost"}

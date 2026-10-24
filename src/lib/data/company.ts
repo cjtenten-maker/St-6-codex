@@ -30,6 +30,7 @@ export function companyCharacters(): Character[] {
     heroPoints: HERO_START,
     energyShield: false,
     seated,
+    portraitPath: null,
   } satisfies Partial<Character>;
 
   const naibroch: Character = {
