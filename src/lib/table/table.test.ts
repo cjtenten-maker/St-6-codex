@@ -98,7 +98,7 @@ describe("two players and a GM handoff", () => {
     state = applyAction(
       state,
       { type: "spendMana", characterId: ID.elowynne, amount: 8 },
-      ctx(ID.trish, ["mana"]),
+      ctx(ID.corbin, ["mana"]),
     );
     state = applyAction(
       state,
@@ -196,10 +196,13 @@ describe("two players and a GM handoff", () => {
     const hidden = parseCodexFile(exportTable(present(state, ID.trish), false));
     expect(hidden.state.table.gmNotes).toBe("");
     expect(hidden.includeGmNotes).toBe(false);
+    expect(hidden.state.characters).toHaveLength(0);
+    expect(JSON.stringify(hidden)).not.toContain("Judge's Edge");
   });
 
   it("puts the suit on and off without treating it as a rest bonus", () => {
-    const state = run(createDemoState(), {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.rob }, ID.justin, "claim");
+    state = run(state, {
       type: "patchCharacter",
       characterId: ID.rob,
       patch: { suit: { on: false, onCha: 12, offCha: 9, onAc: 17, offAc: 14 } },
@@ -208,8 +211,26 @@ describe("two players and a GM handoff", () => {
     expect(character(state, ID.rob).ac).toBe(14);
   });
 
-  it("lets a healer mend a seated ally and raise their AC", () => {
+  it("lets the GM mend a seated hero, and keeps another player's sheet closed", () => {
     let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    expect(() =>
+      run(
+        state,
+        {
+          type: "applyHarm",
+          target: { kind: "character", id: ID.naibroch },
+          amount: 10,
+          direction: "harm",
+          summary: "Naibroch takes 10.",
+        },
+        ID.trish,
+        "harm",
+      ),
+    ).toThrow(/someone else/);
+    expect(() => run(state, { type: "grantCover", characterIds: [ID.naibroch, ID.elowynne], tempAc: 2 }, ID.trish, "cover")).toThrow(
+      /someone else/,
+    );
+    state = run(state, { type: "claimGm" }, ID.justin, "gm");
     state = run(
       state,
       {
@@ -219,8 +240,8 @@ describe("two players and a GM handoff", () => {
         direction: "harm",
         summary: "Naibroch takes 10.",
       },
-      ID.trish,
-      "harm",
+      ID.justin,
+      "harm-gm",
     );
     state = run(
       state,
@@ -229,15 +250,28 @@ describe("two players and a GM handoff", () => {
         target: { kind: "character", id: ID.naibroch },
         amount: 6,
         direction: "heal",
-        summary: "Elowynne mends Naibroch for 6.",
+        summary: "The GM mends Naibroch for 6.",
       },
-      ID.trish,
+      ID.justin,
       "heal",
     );
     expect(character(state, ID.naibroch).hp).toBe(32);
-    state = run(state, { type: "grantCover", characterIds: [ID.naibroch, ID.elowynne], tempAc: 2 }, ID.trish, "cover");
+    state = run(state, { type: "grantCover", characterIds: [ID.naibroch, ID.elowynne], tempAc: 2 }, ID.justin, "cover");
     expect(character(state, ID.naibroch).tempAc).toBe(2);
     expect(character(state, ID.elowynne).tempAc).toBe(2);
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 1,
+        direction: "heal",
+        summary: "Elowynne mends herself.",
+      },
+      ID.trish,
+      "self",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(29);
   });
 
   it("records rolls, harm, spells, and advances on the session log", () => {
@@ -245,8 +279,83 @@ describe("two players and a GM handoff", () => {
     state = run(state, { type: "startSession" }, ID.corbin, "session");
     state = run(state, { type: "log", kind: "roll", summary: "Elowynne rolls 8 + Combat 8 = 16 vs AC 13. Full damage 9." }, ID.trish, "roll");
     state = run(state, { type: "log", kind: "spell", summary: "Thorn Lash fizzles. 1 mana spent." }, ID.corbin, "spell");
+    state = run(state, { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
     state = run(state, { type: "advance", characterId: ID.elowynne, text: "She remembers a hallway of blue glass." }, ID.trish, "advance");
     const kinds = state.log.map((entry) => entry.kind);
     expect(kinds).toEqual(expect.arrayContaining(["session", "roll", "spell", "advance"]));
+  });
+});
+
+describe("character privacy", () => {
+  it("shows other players only the public card, and follows the GM screen", () => {
+    let state = createDemoState();
+    state = run(state, { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { hp: 10, notes: "secret name" } }, ID.trish, "notes");
+    state = run(state, { type: "setPortrait", characterId: ID.elowynne, portraitPath: "data:image/jpeg;base64,abc" }, ID.trish, "art");
+
+    const corbin = present(state, ID.corbin);
+    const card = character(corbin, ID.elowynne);
+    expect(card.concealed).toBe(true);
+    expect(card.name).toBe("Elowynne");
+    expect(card.seated).toBe(true);
+    expect(card.down).toBe(false);
+    expect(card.claimed).toBe(true);
+    expect(card.portraitPath).toBe("data:image/jpeg;base64,abc");
+    expect(card.notes).toBe("");
+    expect(card.abilities).toBe("");
+    expect(card.inventory).toBe("");
+    expect(card.playerName).toBe("");
+    expect(card.ownerId).toBeNull();
+    expect(card.weapons).toEqual([]);
+    expect(card.tags).toEqual([]);
+    expect(card.hp).toBe(0);
+    expect(card.hpMax).toBe(0);
+    expect(card.mana).toBe(0);
+    expect(card.ac).toBe(0);
+    expect(card.heroPoints).toBe(0);
+    expect(card.charisma).toBe(0);
+
+    const trish = present(state, ID.trish);
+    expect(character(trish, ID.elowynne).concealed).toBe(false);
+    expect(character(trish, ID.elowynne).notes).toContain("secret name");
+    expect(character(trish, ID.elowynne).hp).toBe(10);
+    expect(character(trish, ID.naibroch).concealed).toBe(true);
+    expect(character(trish, ID.naibroch).down).toBe(false);
+    expect(character(trish, ID.naibroch).claimed).toBe(false);
+
+    const hidden = present(state, ID.justin);
+    expect(() => run(hidden, { type: "claim", characterId: ID.elowynne }, ID.justin)).toThrow(/claimed/);
+    expect(() => run(hidden, { type: "patchCharacter", characterId: ID.elowynne, patch: { hp: 1 } }, ID.justin)).toThrow(/private/);
+    expect(() => run(state, { type: "setPortrait", characterId: ID.willow, portraitPath: "data:image/jpeg;base64,no" }, ID.corbin)).toThrow(/claim/i);
+
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    const asGm = present(state, ID.corbin);
+    expect(character(asGm, ID.elowynne).notes).toContain("secret name");
+    expect(character(asGm, ID.elowynne).hp).toBe(10);
+    expect(asGm.table.gmNotes.length).toBeGreaterThan(0);
+    state = run(state, { type: "setPortrait", characterId: ID.elowynne, portraitPath: "data:image/jpeg;base64,gm" }, ID.corbin, "gm-art");
+    expect(character(present(state, ID.justin), ID.elowynne).portraitPath).toBe("data:image/jpeg;base64,gm");
+
+    state = run(state, { type: "claim", characterId: ID.naibroch }, ID.corbin, "own");
+    state = run(state, { type: "claimGm" }, ID.trish, "handoff");
+    const oldGm = present(state, ID.corbin);
+    expect(oldGm.table.gmNotes).toBe("");
+    expect(character(oldGm, ID.elowynne).concealed).toBe(true);
+    expect(character(oldGm, ID.elowynne).notes).toBe("");
+    expect(character(oldGm, ID.naibroch).concealed).toBe(false);
+    expect(character(oldGm, ID.naibroch).ownerId).toBe(ID.corbin);
+    const newGm = present(state, ID.trish);
+    expect(newGm.table.gmNotes.length).toBeGreaterThan(0);
+    expect(character(newGm, ID.naibroch).concealed).toBe(false);
+    expect(character(newGm, ID.elowynne).notes).toContain("secret name");
+  });
+
+  it("marks a public card down without revealing the hit points", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { hp: 0 } }, ID.trish, "down");
+    const card = character(present(state, ID.corbin), ID.elowynne);
+    expect(card.down).toBe(true);
+    expect(card.hpMax).toBe(0);
+    expect(card.concealed).toBe(true);
   });
 });

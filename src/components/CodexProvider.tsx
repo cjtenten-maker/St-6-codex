@@ -9,6 +9,7 @@ import { chooseTableMode } from "@/lib/auth/mode";
 import { authCallbackClient, createSupabaseApi, supabaseConfigured } from "@/lib/backend/supabase";
 import { DEMO_CODE } from "@/lib/ids";
 import type { Action, TableState } from "@/lib/model";
+import { portraitDataUrl } from "@/lib/portrait";
 import { RuleError } from "@/lib/rules/errors";
 
 const VIEWER_KEY = "st6-viewer";
@@ -35,6 +36,8 @@ type Codex = {
   load: (code: string) => Promise<TableState | null>;
   watch: (tableId: string, onChange: () => void) => () => void;
   dispatch: (code: string, action: Action) => Promise<TableState>;
+  setPortrait: (code: string, characterId: string, file: File | null) => Promise<TableState>;
+  portraitUrl: (path: string) => Promise<string>;
   exportJson: (code: string) => Promise<string>;
   importTable: (raw: string) => Promise<string>;
   useLocalDemo: () => void;
@@ -231,6 +234,18 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
         if (mode === "local" || !remote) return local.dispatch(code, action);
         return remote.dispatch(code, action, viewer);
       },
+      async setPortrait(code: string, characterId: string, file: File | null) {
+        if (!viewer) throw new RuleError("Pick who is holding this phone.");
+        if (mode === "local" || !remote) {
+          const portraitPath = file ? await portraitDataUrl(file) : null;
+          return local.dispatch(code, { type: "setPortrait", characterId, portraitPath });
+        }
+        return remote.setPortrait(code, characterId, file);
+      },
+      async portraitUrl(path: string) {
+        if (path.startsWith("data:") || mode === "local" || !remote) return path;
+        return remote.portraitUrl(path);
+      },
       async exportJson(code: string) {
         if (mode === "local" || !remote) return local.exportJson(code);
         return remote.exportJson(code, viewer?.id ?? null);
@@ -312,10 +327,10 @@ export function useTable(code: string) {
     };
   }, [code, codex, reload, router]);
 
-  const dispatch = useCallback(
-    async (action: Action) => {
+  const run = useCallback(
+    async (work: () => Promise<TableState>) => {
       try {
-        const next = await codex.dispatch(code, action);
+        const next = await work();
         setState(next);
         setError(null);
         return next;
@@ -325,10 +340,17 @@ export function useTable(code: string) {
         throw new RuleError(text);
       }
     },
-    [code, codex],
+    [],
   );
 
-  return { state, error, setError, missing, live, dispatch, viewer: codex.viewer, mode: codex.mode };
+  const dispatch = useCallback((action: Action) => run(() => codex.dispatch(code, action)), [code, codex, run]);
+
+  const setPortrait = useCallback(
+    (characterId: string, file: File | null) => run(() => codex.setPortrait(code, characterId, file)),
+    [code, codex, run],
+  );
+
+  return { state, error, setError, missing, live, dispatch, setPortrait, viewer: codex.viewer, mode: codex.mode };
 }
 
 export function Notice({ text, onClose }: { text: string | null; onClose: () => void }) {

@@ -6,7 +6,8 @@ import { companyForTable } from "../data/company";
 import type { Action, Character, Foe, LogEntry, Member, TableState } from "../model";
 import { RuleError } from "../rules/errors";
 import { exportTable, parseCodexFile } from "../table/export";
-import { present } from "../table/present";
+import { downscalePortrait, portraitObjectName } from "../portrait";
+import { characterFromCard, present } from "../table/present";
 import { applyAction } from "../table/reducer";
 import type { Viewer } from "./local";
 
@@ -29,7 +30,17 @@ type CharacterRow = {
   table_id: string;
   owner_id: string | null;
   seated: boolean;
-  sheet: Omit<Character, "id" | "ownerId" | "seated">;
+  portrait_path: string | null;
+  sheet: Omit<Character, "id" | "ownerId" | "seated" | "portraitPath" | "concealed" | "claimed" | "down">;
+};
+
+type CardRow = {
+  id: string;
+  name: string;
+  seated: boolean;
+  down: boolean;
+  claimed: boolean;
+  portrait_path: string | null;
 };
 
 type FoeRow = { id: string; table_id: string; foe: Omit<Foe, "id"> };
@@ -84,12 +95,27 @@ function fail(error: { message: string } | null): void {
 }
 
 function characterFromRow(row: CharacterRow): Character {
-  return { ...row.sheet, id: row.id, ownerId: row.owner_id, seated: row.seated };
+  const sheet = { ...(row.sheet as Character) };
+  delete sheet.concealed;
+  delete sheet.claimed;
+  delete sheet.down;
+  delete sheet.portraitPath;
+  return {
+    ...sheet,
+    id: row.id,
+    ownerId: row.owner_id,
+    seated: row.seated,
+    portraitPath: row.portrait_path ?? null,
+    concealed: false,
+  };
 }
 
 function characterToRow(tableId: string, character: Character): CharacterRow {
-  const { id, ownerId, seated, ...sheet } = character;
-  return { id, table_id: tableId, owner_id: ownerId, seated, sheet };
+  const { id, ownerId, seated, portraitPath, concealed, claimed, down, ...sheet } = character;
+  void concealed;
+  void claimed;
+  void down;
+  return { id, table_id: tableId, owner_id: ownerId, seated, portrait_path: portraitPath ?? null, sheet };
 }
 
 async function loadFull(code: string): Promise<TableState | null> {
@@ -98,15 +124,22 @@ async function loadFull(code: string): Promise<TableState | null> {
   fail(error);
   if (!table) return null;
   const row = table as TableRow;
-  const [members, characters, foes, logs, notes] = await Promise.all([
+  const [members, characters, cards, foes, logs, notes] = await Promise.all([
     supabase.from("table_members").select("profile_id, profiles(display_name, email)").eq("table_id", row.id),
     supabase.from("characters").select("*").eq("table_id", row.id),
+    supabase.from("character_cards").select("id, name, seated, down, claimed, portrait_path").eq("table_id", row.id),
     supabase.from("foes").select("*").eq("table_id", row.id),
     supabase.from("log_entries").select("*").eq("table_id", row.id).order("created_at", { ascending: true }),
     supabase.from("gm_notes").select("body").eq("table_id", row.id).maybeSingle(),
   ]);
   fail(members.error);
   fail(characters.error);
+  if (cards.error) {
+    if (cards.error.code === "PGRST205" || /character_cards/i.test(cards.error.message)) {
+      throw new RuleError("Character privacy isn't on this database yet. Apply supabase/migrations/002_character_privacy.sql.");
+    }
+    fail(cards.error);
+  }
   fail(foes.error);
   fail(logs.error);
   if (notes.error && notes.error.code !== "PGRST116") fail(notes.error);
@@ -134,10 +167,36 @@ async function loadFull(code: string): Promise<TableState | null> {
         email: profile?.email ?? "",
       };
     }),
-    characters: ((characters.data ?? []) as CharacterRow[]).map(characterFromRow),
+    characters: mergeCharacters((characters.data ?? []) as CharacterRow[], (cards.data ?? []) as CardRow[]),
     foes: ((foes.data ?? []) as FoeRow[]).map((foe) => ({ ...foe.foe, id: foe.id })),
     log: ((logs.data ?? []) as LogRow[]).map((entry) => entry.entry),
   };
+}
+
+function mergeCharacters(rows: CharacterRow[], cards: CardRow[]): Character[] {
+  const full = new Map(rows.map((row) => [row.id, characterFromRow(row)]));
+  const seen = new Set<string>();
+  const characters: Character[] = [];
+  for (const card of cards) {
+    seen.add(card.id);
+    const secret = full.get(card.id);
+    characters.push(
+      secret
+        ? { ...secret, portraitPath: secret.portraitPath ?? card.portrait_path }
+        : characterFromCard({
+            id: card.id,
+            name: card.name,
+            seated: card.seated,
+            down: card.down,
+            claimed: card.claimed,
+            portraitPath: card.portrait_path,
+          }),
+    );
+  }
+  for (const secret of full.values()) {
+    if (!seen.has(secret.id)) characters.push(secret);
+  }
+  return characters;
 }
 
 async function persistDiff(prev: TableState, next: TableState): Promise<void> {
@@ -184,19 +243,37 @@ async function diffCharacters(prev: TableState, next: TableState): Promise<void>
   for (const character of next.characters) {
     const old = before.get(character.id);
     const row = characterToRow(next.table.id, character);
+    if (character.concealed) {
+      if (character.ownerId && character.ownerId !== old?.ownerId) {
+        const { error } = await supabase
+          .from("characters")
+          .update({ owner_id: character.ownerId, updated_at: new Date().toISOString() })
+          .eq("id", character.id);
+        fail(error);
+      }
+      before.delete(character.id);
+      continue;
+    }
     if (!old) {
       const { error } = await supabase.from("characters").insert({ ...row, updated_at: new Date().toISOString() });
       fail(error);
-    } else if (JSON.stringify(old) !== JSON.stringify(character)) {
+    } else if (old.concealed || JSON.stringify(characterToRow(next.table.id, old)) !== JSON.stringify(row)) {
       const { error } = await supabase
         .from("characters")
-        .update({ owner_id: row.owner_id, seated: row.seated, sheet: row.sheet, updated_at: new Date().toISOString() })
+        .update({
+          owner_id: row.owner_id,
+          seated: row.seated,
+          portrait_path: row.portrait_path,
+          sheet: row.sheet,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", character.id);
       fail(error);
     }
     before.delete(character.id);
   }
   for (const leftover of before.values()) {
+    if (leftover.concealed) continue;
     const { error } = await supabase.from("characters").delete().eq("id", leftover.id);
     fail(error);
   }
@@ -373,6 +450,42 @@ export function createSupabaseApi() {
       const { error } = await getSupabase().rpc("join_table", { p_code: code.toUpperCase() });
       fail(error);
     },
+    async portraitUrl(path: string) {
+      if (path.startsWith("data:")) return path;
+      const { data, error } = await getSupabase().storage.from("character-art").createSignedUrl(path, 60 * 60);
+      fail(error);
+      if (!data?.signedUrl) throw new RuleError("That portrait didn't load.");
+      return data.signedUrl;
+    },
+    async setPortrait(code: string, characterId: string, file: File | null) {
+      const viewer = await this.getViewer();
+      if (!viewer) throw new RuleError("Sign in first.");
+      const full = await loadFull(code);
+      if (!full) throw new RuleError("No table uses that code.");
+      const character = full.characters.find((item) => item.id === characterId);
+      if (!character || character.concealed) throw new RuleError("That sheet is private.");
+      if (!character.ownerId) throw new RuleError("Claim the character before adding a portrait.");
+      if (character.ownerId !== viewer.id && full.table.currentGmId !== viewer.id) {
+        throw new RuleError("Only the player or the GM can change the portrait.");
+      }
+      const previous = character.portraitPath && !character.portraitPath.startsWith("data:") ? character.portraitPath : null;
+      let portraitPath: string | null = null;
+      if (file) {
+        const blob = await downscalePortrait(file);
+        portraitPath = portraitObjectName(full.table.id, character.id);
+        const { error } = await getSupabase().storage.from("character-art").upload(portraitPath, blob, {
+          contentType: "image/jpeg",
+          cacheControl: "3600",
+          upsert: false,
+        });
+        fail(error);
+      }
+      const next = await this.dispatch(code, { type: "setPortrait", characterId, portraitPath }, viewer);
+      if (previous && previous !== portraitPath) {
+        await getSupabase().storage.from("character-art").remove([previous]);
+      }
+      return next;
+    },
     async load(code: string, viewerId: string | null) {
       const full = await loadFull(code);
       if (!full) return null;
@@ -382,6 +495,7 @@ export function createSupabaseApi() {
       const channel = getSupabase()
         .channel(`table-${tableId}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "characters", filter: `table_id=eq.${tableId}` }, listener)
+        .on("postgres_changes", { event: "*", schema: "public", table: "character_cards", filter: `table_id=eq.${tableId}` }, listener)
         .on("postgres_changes", { event: "*", schema: "public", table: "foes", filter: `table_id=eq.${tableId}` }, listener)
         .on("postgres_changes", { event: "*", schema: "public", table: "log_entries", filter: `table_id=eq.${tableId}` }, listener)
         .on("postgres_changes", { event: "*", schema: "public", table: "gm_notes", filter: `table_id=eq.${tableId}` }, listener)
@@ -404,6 +518,10 @@ export function createSupabaseApi() {
       const next =
         action.type === "join" ? base : applyAction(base, action, { actorId: viewer.id, now: new Date().toISOString() });
       await persistDiff(base, next);
+      if (action.type === "claimGm") {
+        const { error: sitOutError } = await getSupabase().rpc("sit_out_own_characters", { p_table_id: next.table.id });
+        fail(sitOutError);
+      }
       const fresh = await loadFull(code);
       return present(fresh ?? next, viewer.id);
     },
@@ -411,7 +529,7 @@ export function createSupabaseApi() {
       const full = await loadFull(code);
       if (!full) throw new RuleError("No table uses that code.");
       const include = Boolean(viewerId && full.table.currentGmId === viewerId);
-      return exportTable(include ? full : present(full, null), include);
+      return exportTable(include ? full : present(full, viewerId), include);
     },
     async importJson(raw: string, viewer: Viewer) {
       const file = parseCodexFile(raw);

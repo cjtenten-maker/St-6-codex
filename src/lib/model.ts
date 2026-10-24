@@ -82,6 +82,17 @@ export type Character = {
   /** +1 to cast while the focus is in hand. Naibroch's staff. */
   focusCastBonus?: number;
   focusOn?: boolean;
+  /**
+   * Storage path, or a data URL in the local demo.
+   * Everyone at the table can see it. Empty until someone claims the sheet and uploads one.
+   */
+  portraitPath?: string | null;
+  /** True on a public card. The numbers on that object are empty, not the real sheet. */
+  concealed?: boolean;
+  /** Set on a public card. Does not say who claimed it. */
+  claimed?: boolean;
+  /** Set on a public card when hit points are 0. The hit point number stays hidden. */
+  down?: boolean;
 };
 
 export type Foe = {
@@ -180,6 +191,7 @@ export type Action =
   | { type: "claim"; characterId: string }
   | { type: "release"; characterId: string }
   | { type: "patchCharacter"; characterId: string; patch: CharacterPatch }
+  | { type: "setPortrait"; characterId: string; portraitPath: string | null }
   | { type: "setEligible"; memberIds: string[] }
   | { type: "claimGm" }
   | { type: "releaseGm" }

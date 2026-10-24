@@ -398,7 +398,7 @@ export function Roller({
 
         {cast?.tempAc && !cast.healing ? (
           <label className="grid gap-1 text-sm">
-            <span className="text-mute">{spell?.aoeAc ? "Cover lands on every seated hero" : "Ward"}</span>
+            <span className="text-mute">{spell?.aoeAc ? "Cover lands on the seated sheets you can edit" : "Ward"}</span>
             {spell?.aoeAc ? null : (
               <select className="min-h-11 rounded-xl border border-line bg-panel px-3" value={healId} onChange={(event) => setHealId(event.target.value)}>
                 {seatedAllies.map((hero) => (

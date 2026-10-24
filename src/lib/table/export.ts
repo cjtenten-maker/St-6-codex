@@ -1,4 +1,4 @@
-import { COMPANY_CAP, SEAT_CAP, type TableState } from "../model";
+import { COMPANY_CAP, SEAT_CAP, type Character, type TableState } from "../model";
 import { RuleError } from "../rules/errors";
 
 export type CodexFile = {
@@ -9,13 +9,26 @@ export type CodexFile = {
   state: TableState;
 };
 
+function sheetForExport(character: Character): Character {
+  const { concealed, claimed, down, ...sheet } = character;
+  void concealed;
+  void claimed;
+  void down;
+  return sheet;
+}
+
 export function exportTable(state: TableState, includeGmNotes: boolean, now = new Date().toISOString()): string {
+  const visible: TableState = {
+    ...state,
+    table: { ...state.table, gmNotes: includeGmNotes ? state.table.gmNotes : "" },
+    characters: state.characters.filter((character) => !character.concealed).map(sheetForExport),
+  };
   const file: CodexFile = {
     format: "st6-codex",
     version: 1,
     exportedAt: now,
     includeGmNotes,
-    state: includeGmNotes ? state : { ...state, table: { ...state.table, gmNotes: "" } },
+    state: visible,
   };
   return JSON.stringify(file, null, 2);
 }

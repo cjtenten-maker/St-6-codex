@@ -11,8 +11,13 @@ export function Nav({ code }: { code: string }) {
   const [sheet, setSheet] = useState(`/t/${key}`);
 
   useEffect(() => {
-    const id = sessionStorage.getItem(`st6-sheet-${key}`);
-    setSheet(id ? `/t/${key}/c/${id}` : `/t/${key}`);
+    const read = () => {
+      const id = sessionStorage.getItem(`st6-sheet-${key}`);
+      setSheet(id ? `/t/${key}/c/${id}` : `/t/${key}`);
+    };
+    read();
+    window.addEventListener("st6-sheet", read);
+    return () => window.removeEventListener("st6-sheet", read);
   }, [key, path]);
 
   const items = [
