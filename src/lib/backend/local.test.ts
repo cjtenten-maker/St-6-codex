@@ -101,4 +101,19 @@ describe("local table, two phones on one machine", () => {
     expect(corbin.exportJson("SEAL6")).not.toContain("Cult speaker");
     expect(() => corbin.dispatch("SEAL6", { type: "spawnTrouble", troubleId: bandit.id, count: 1 })).toThrow(/GM/);
   });
+
+  it("lists only the tables this person has joined, with the creator's name", () => {
+    const store = createMemoryStore();
+    const corbin = createLocalApi(store);
+    const justin = createLocalApi(store);
+    corbin.setViewer({ ...DEMO_PLAYERS[0] });
+    justin.setViewer({ ...DEMO_PLAYERS[2] });
+    corbin.ensureDemo();
+    const code = corbin.createTable("Thursday table", false);
+    expect(corbin.listTables().map((table) => table.code).sort()).toEqual(["SEAL6", code].sort());
+    expect(corbin.listTables().find((table) => table.code === code)?.creatorName).toBe("Corbin");
+    expect(justin.listTables().map((table) => table.code)).toEqual(["SEAL6"]);
+    justin.dispatch(code, { type: "join", member: { ...DEMO_PLAYERS[2] } });
+    expect(justin.listTables().map((table) => table.code).sort()).toEqual(["SEAL6", code].sort());
+  });
 });

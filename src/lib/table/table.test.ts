@@ -355,6 +355,49 @@ describe("character privacy", () => {
     expect(character(newGm, ID.elowynne).notes).toContain("secret name");
   });
 
+  it("claims the same row, keeps the description, and refuses a second copy of the name", () => {
+    let state = createDemoState();
+    const look = character(state, ID.mystie).look;
+    expect(look.length).toBeGreaterThan(0);
+    state = run(state, { type: "claim", characterId: ID.mystie }, ID.trish, "claim");
+    expect(character(state, ID.mystie).ownerId).toBe(ID.trish);
+    expect(character(state, ID.mystie).look).toBe(look);
+    expect(state.characters.filter((hero) => hero.name.trim().toLowerCase() === "mystie")).toHaveLength(1);
+
+    state = run(state, { type: "patchCharacter", characterId: ID.mystie, patch: { look: "Green cloak, gold-flecked eyes." } }, ID.trish, "look");
+    expect(character(state, ID.mystie).look).toBe("Green cloak, gold-flecked eyes.");
+    expect(character(present(state, ID.justin), ID.mystie).look).toBe("");
+
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    state = run(state, { type: "patchCharacter", characterId: ID.mystie, patch: { look: "The GM amends the description." } }, ID.corbin, "gm-look");
+    expect(character(state, ID.mystie).look).toBe("The GM amends the description.");
+    expect(() =>
+      run(state, { type: "patchCharacter", characterId: ID.mystie, patch: { look: "nope" } }, ID.justin),
+    ).toThrow(/someone else|private/i);
+
+    const copy = { ...character(state, ID.mystie), id: "30000000-0000-4000-8000-000000000099", ownerId: ID.justin, seated: false };
+    expect(() => run(state, { type: "addCharacter", character: { ...copy, name: " mystie " } }, ID.justin)).toThrow(/already at this table/i);
+    expect(state.characters.filter((hero) => hero.name.trim().toLowerCase() === "mystie")).toHaveLength(1);
+  });
+
+  it("lets the owner or the GM retire a character and keeps the sheet private from everyone else", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.mystie }, ID.trish, "claim");
+    expect(state.table.turnOrder).toContain(ID.mystie);
+    expect(() => run(state, { type: "removeCharacter", characterId: ID.mystie }, ID.justin)).toThrow(/player or the GM/i);
+    expect(character(state, ID.mystie).id).toBe(ID.mystie);
+
+    state = run(state, { type: "removeCharacter", characterId: ID.mystie }, ID.trish, "retire");
+    expect(state.characters.some((hero) => hero.id === ID.mystie)).toBe(false);
+    expect(state.table.turnOrder).not.toContain(ID.mystie);
+    expect(state.log.at(-1)?.summary).toMatch(/Mystie leaves/);
+
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    state = run(state, { type: "removeCharacter", characterId: ID.willow }, ID.corbin, "gm-retire");
+    expect(state.characters.some((hero) => hero.id === ID.willow)).toBe(false);
+    const hidden = present(state, ID.justin);
+    expect(() => run(hidden, { type: "removeCharacter", characterId: ID.elowynne }, ID.justin)).toThrow(/private/);
+  });
+
   it("marks a public card down without revealing the hit points", () => {
     let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
     state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { hp: 0 } }, ID.trish, "down");

@@ -26,6 +26,31 @@ export function portraitObjectName(tableId: string, characterId: string, rev = D
   return `${tableId}/${characterId}/${stamp}.jpg`;
 }
 
+const ART_FILE = /^[0-9]{1,16}\.jpg$/i;
+
+/**
+ * Object names to remove when a character leaves.
+ * Only files already stored under that character. A data URL stays in the demo.
+ */
+export function characterArtObjectNames(
+  tableId: string,
+  characterId: string,
+  portraitPath: string | null | undefined,
+  listedFileNames: readonly string[],
+): string[] {
+  if (!UUID.test(tableId) || !UUID.test(characterId)) return [];
+  const folder = `${tableId}/${characterId}`;
+  const names = new Set<string>();
+  if (portraitPath && !portraitPath.startsWith("data:") && portraitPath.startsWith(`${folder}/`) && ART_FILE.test(portraitPath.slice(folder.length + 1))) {
+    names.add(portraitPath);
+  }
+  for (const file of listedFileNames) {
+    if (!ART_FILE.test(file) || file.includes("/") || file.includes("\\")) continue;
+    names.add(`${folder}/${file}`);
+  }
+  return [...names];
+}
+
 export function assertPortraitFile(file: { size: number; type: string; name?: string }): void {
   if (file.size <= 0) throw new RuleError("That file is empty.");
   if (file.size > PORTRAIT_MAX_BYTES) throw new RuleError("Choose a photo under 5 MB.");

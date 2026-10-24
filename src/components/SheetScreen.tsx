@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { WEAPONS, SPELLS } from "@/lib/data/catalog";
 import type { Character, Spell, StatName, Weapon } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
@@ -10,6 +10,7 @@ import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
 import { Portrait, PortraitControls } from "./Portrait";
 import { Roller } from "./Roller";
+import { TableBanner } from "./TableBanner";
 import { Banner, Button, Card, Kicker, Meter, Pips, TextField, Area } from "./ui";
 
 const STATS: { key: StatName; label: string }[] = [
@@ -17,6 +18,14 @@ const STATS: { key: StatName; label: string }[] = [
   { key: "strength", label: "Str" },
   { key: "combat", label: "Com" },
   { key: "arcana", label: "Arc" },
+];
+
+/** Amend labels. Speed is the charisma stat on the sheet. */
+const AMEND_STATS: { key: StatName; label: string }[] = [
+  { key: "combat", label: "Combat" },
+  { key: "strength", label: "Strength" },
+  { key: "charisma", label: "Speed" },
+  { key: "arcana", label: "Arcana" },
 ];
 
 type Roll =
@@ -69,6 +78,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         <Link href={`/t/${state.table.code}`} className="text-sm text-mute">
           ← {state.table.name}
         </Link>
+        <TableBanner state={state} />
         <header className="mt-2">
           <Kicker>{character.seated ? "Seated" : "Sitting out"}{character.down ? " · Down" : ""}</Kicker>
           <h1 className="font-display text-4xl font-medium leading-tight">{character.name}</h1>
@@ -122,6 +132,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
       <Link href={`/t/${state.table.code}`} className="text-sm text-mute">
         ← {state.table.name}
       </Link>
+      <TableBanner state={state} />
       <header className="mt-2">
         <Kicker>
           {character.seated ? "Seated" : "Sitting out"}
@@ -150,6 +161,11 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         </p>
       </header>
 
+      {character.look ? (
+        <section className="mt-4">
+          <Block title="Description" body={character.look} />
+        </section>
+      ) : null}
       {character.concept ? <p className="mt-3 leading-snug">{character.concept}</p> : null}
       {!character.seated ? <Banner tone="miss">Not in the seats. Rests, the new session, and trouble don't reach them.</Banner> : null}
       {character.hp === 0 ? <div className="mt-3"><Banner tone="miss">Down.</Banner></div> : null}
@@ -348,7 +364,6 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
       ) : null}
 
       <section className="mt-6 grid gap-3 text-sm leading-relaxed">
-        {character.look ? <Block title="Look" body={character.look} /> : null}
         {character.abilities ? <Block title="Abilities" body={character.abilities} /> : null}
         {character.inventory ? <Block title="Inventory" body={character.inventory} /> : null}
         {character.notes ? <Block title="Notes" body={character.notes} /> : null}
@@ -367,6 +382,9 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           onSave={async (patch) => {
             await table.dispatch({ type: "patchCharacter", characterId: character.id, patch });
             setAmending(false);
+          }}
+          onRetire={async () => {
+            await table.dispatch({ type: "removeCharacter", characterId: character.id });
           }}
         />
       ) : null}
@@ -414,30 +432,72 @@ function withUnarmed(weapons: Weapon[]): Weapon[] {
   ];
 }
 
-function Amend({ character, onSave }: { character: Character; onSave: (patch: Partial<Character>) => Promise<void> }) {
+function Labeled({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-[11px] uppercase tracking-[0.14em] text-mute">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Amend({
+  character,
+  onSave,
+  onRetire,
+}: {
+  character: Character;
+  onSave: (patch: Partial<Character>) => Promise<void>;
+  onRetire: () => Promise<void>;
+}) {
   const [draft, setDraft] = useState(character);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRetire, setConfirmRetire] = useState(false);
   const set = (patch: Partial<Character>) => setDraft({ ...draft, ...patch });
   return (
-    <Card className="mt-3 grid gap-2">
+    <Card className="mt-3 grid gap-3">
       <Kicker>Amend</Kicker>
-      <TextField value={draft.name} aria-label="Name" onChange={(event) => set({ name: event.target.value })} />
-      <TextField value={draft.role} aria-label="Role" onChange={(event) => set({ role: event.target.value })} />
-      <div className="grid grid-cols-4 gap-2">
-        {STATS.map((stat) => (
-          <TextField key={stat.key} aria-label={stat.label} inputMode="numeric" value={draft[stat.key]} onChange={(event) => set({ [stat.key]: Number(event.target.value) })} />
+      <Labeled label="Name">
+        <TextField value={draft.name} aria-label="Name" onChange={(event) => set({ name: event.target.value })} />
+      </Labeled>
+      <Labeled label="Role">
+        <TextField value={draft.role} aria-label="Role" onChange={(event) => set({ role: event.target.value })} />
+      </Labeled>
+      <Labeled label="Description">
+        <Area rows={4} value={draft.look} aria-label="Description" onChange={(event) => set({ look: event.target.value })} />
+      </Labeled>
+      <div className="grid grid-cols-2 gap-2">
+        {AMEND_STATS.map((stat) => (
+          <Labeled key={stat.key} label={stat.label}>
+            <TextField aria-label={stat.label} inputMode="numeric" value={draft[stat.key]} onChange={(event) => set({ [stat.key]: Number(event.target.value) })} />
+          </Labeled>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <TextField aria-label="HP" inputMode="numeric" value={draft.hp} onChange={(event) => set({ hp: Number(event.target.value) })} />
-        <TextField aria-label="HP max" inputMode="numeric" value={draft.hpMax} onChange={(event) => set({ hpMax: Number(event.target.value) })} />
-        <TextField aria-label="Mana" inputMode="numeric" value={draft.mana} onChange={(event) => set({ mana: Number(event.target.value) })} />
-        <TextField aria-label="AC" inputMode="numeric" value={draft.ac} onChange={(event) => set({ ac: Number(event.target.value) })} />
+        <Labeled label="HP">
+          <TextField aria-label="HP" inputMode="numeric" value={draft.hp} onChange={(event) => set({ hp: Number(event.target.value) })} />
+        </Labeled>
+        <Labeled label="Max HP">
+          <TextField aria-label="Max HP" inputMode="numeric" value={draft.hpMax} onChange={(event) => set({ hpMax: Number(event.target.value) })} />
+        </Labeled>
+        <Labeled label="Mana">
+          <TextField aria-label="Mana" inputMode="numeric" value={draft.mana} onChange={(event) => set({ mana: Number(event.target.value) })} />
+        </Labeled>
+        <Labeled label="AC">
+          <TextField aria-label="AC" inputMode="numeric" value={draft.ac} onChange={(event) => set({ ac: Number(event.target.value) })} />
+        </Labeled>
       </div>
-      <TextField value={draft.acNote} aria-label="AC note" onChange={(event) => set({ acNote: event.target.value })} />
-      <Area rows={3} value={draft.notes} aria-label="Notes" onChange={(event) => set({ notes: event.target.value })} />
-      <Area rows={2} value={draft.inventory} aria-label="Inventory" onChange={(event) => set({ inventory: event.target.value })} />
+      <Labeled label="AC note">
+        <TextField value={draft.acNote} aria-label="AC note" onChange={(event) => set({ acNote: event.target.value })} />
+      </Labeled>
+      <Labeled label="Notes">
+        <Area rows={3} value={draft.notes} aria-label="Notes" onChange={(event) => set({ notes: event.target.value })} />
+      </Labeled>
+      <Labeled label="Gear">
+        <Area rows={2} value={draft.inventory} aria-label="Gear" onChange={(event) => set({ inventory: event.target.value })} />
+      </Labeled>
       <div className="grid gap-1">
+        <span className="text-[11px] uppercase tracking-[0.14em] text-mute">Tags</span>
         {draft.tags.map((tag, index) => (
           <div key={tag.id} className="flex gap-2">
             <TextField value={tag.label} aria-label={`Tag ${index + 1}`} onChange={(event) => set({ tags: draft.tags.map((item, i) => (i === index ? { ...item, label: event.target.value } : item)) })} />
@@ -497,6 +557,20 @@ function Amend({ character, onSave }: { character: Character; onSave: (patch: Pa
       >
         Save the amend
       </Button>
+      {confirmRetire ? (
+        <Button
+          tone="danger"
+          onClick={() => {
+            void onRetire().catch((caught: Error) => setError(caught.message));
+          }}
+        >
+          Delete {character.name}
+        </Button>
+      ) : (
+        <Button tone="quiet" type="button" onClick={() => setConfirmRetire(true)}>
+          Retire this character
+        </Button>
+      )}
     </Card>
   );
 }

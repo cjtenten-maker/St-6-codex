@@ -146,6 +146,13 @@ export type Member = {
   email: string;
 };
 
+/** A table this person belongs to. The creator's name tells same-named tables apart. */
+export type TableSummary = {
+  code: string;
+  name: string;
+  creatorName: string;
+};
+
 export type TableMeta = {
   id: string;
   code: string;
@@ -239,6 +246,7 @@ export type Action =
   | { type: "shortRest" }
   | { type: "longRest" }
   | { type: "addCharacter"; character: Character }
+  | { type: "removeCharacter"; characterId: string }
   | { type: "addFoe"; foe: Foe }
   | { type: "patchFoe"; foeId: string; patch: Partial<Omit<Foe, "id">> }
   | { type: "removeFoe"; foeId: string }

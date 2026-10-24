@@ -65,10 +65,14 @@ export function createLocalApi(store: Store) {
     },
     subscribe: store.subscribe.bind(store),
     listTables() {
-      return Object.values(store.read().tables).map((table) => ({
-        code: table.table.code,
-        name: table.table.name,
-      }));
+      const who = viewer?.id;
+      return Object.values(store.read().tables)
+        .filter((table) => Boolean(who) && table.members.some((member) => member.id === who))
+        .map((table) => ({
+          code: table.table.code,
+          name: table.table.name,
+          creatorName: table.members.find((member) => member.id === table.table.createdBy)?.displayName ?? "someone who left",
+        }));
     },
     ensureDemo() {
       if (!store.read().tables[DEMO_CODE]) writeTable(DEMO_CODE, createDemoState());

@@ -10,6 +10,7 @@ import { effectiveAc } from "@/lib/model";
 import { manaMaximum } from "@/lib/rules";
 import { isClaimed } from "@/lib/table/present";
 import { Portrait } from "./Portrait";
+import { TableBanner } from "./TableBanner";
 import { Banner, Button, Card, Kicker, Meter, Pips } from "./ui";
 
 export function TableScreen({ code }: { code: string }) {
@@ -64,13 +65,7 @@ export function TableScreen({ code }: { code: string }) {
   return (
     <Frame code={state.table.code}>
       <header className="flex items-start justify-between gap-3">
-        <div>
-          <Kicker>
-            {state.table.code}
-            {table.live ? <span className="ml-2 text-good">Live</span> : null}
-          </Kicker>
-          <h1 className="font-display text-4xl font-medium leading-none">{state.table.name}</h1>
-        </div>
+        <TableBanner state={state} live={table.live} prominent />
         <Link href="/rules" className="pt-1 text-sm text-brass">
           Rules
         </Link>
@@ -298,7 +293,7 @@ export function TableScreen({ code }: { code: string }) {
           Export JSON
         </Button>
         <label className="inline-flex min-h-11 cursor-pointer items-center rounded-xl border border-line px-4 text-sm">
-          Import
+          Import as a new table
           <input
             className="sr-only"
             type="file"
