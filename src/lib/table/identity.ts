@@ -18,3 +18,26 @@ export function tableHost(state: Pick<TableState, "table" | "members">): TableHo
 export function hasJoinedTable(tables: { code: string }[]): boolean {
   return tables.some((table) => table.code.toUpperCase() !== DEMO_CODE);
 }
+
+export const LAST_TABLE_KEY = "st6-last-table";
+
+export function rememberTable(code: string): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(LAST_TABLE_KEY, code.toUpperCase());
+}
+
+export function lastTable(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  const code = localStorage.getItem(LAST_TABLE_KEY)?.toUpperCase() ?? "";
+  return /^[A-Z0-9]{4,8}$/.test(code) ? code : null;
+}
+
+/** Keep the current tab when the table changes. A sheet only follows if that table has one saved. */
+export function pathForTable(pathname: string, toCode: string, sheetId?: string | null): string {
+  const to = toCode.toUpperCase();
+  const path = pathname.split("?")[0].replace(/\/$/, "") || "/";
+  if (path.endsWith("/gm")) return `/t/${to}/gm`;
+  if (path.endsWith("/log")) return `/t/${to}/log`;
+  if (/\/c\/[^/]+$/.test(path)) return sheetId ? `/t/${to}/c/${sheetId}` : `/t/${to}`;
+  return `/t/${to}`;
+}

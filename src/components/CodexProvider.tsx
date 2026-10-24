@@ -8,7 +8,7 @@ import { consumeAuthCallback } from "@/lib/auth/callback";
 import { chooseTableMode } from "@/lib/auth/mode";
 import { authCallbackClient, createSupabaseApi, supabaseConfigured } from "@/lib/backend/supabase";
 import { DEMO_CODE } from "@/lib/ids";
-import type { Action, TableState } from "@/lib/model";
+import type { Action, TableState, TableSummary } from "@/lib/model";
 import { portraitDataUrl, type ArtBucket } from "@/lib/portrait";
 import { RuleError } from "@/lib/rules/errors";
 
@@ -20,7 +20,7 @@ type Codex = {
   supabaseConfigured: boolean;
   ready: boolean;
   viewer: Viewer | null;
-  tables: { code: string; name: string }[];
+  tables: TableSummary[];
   notice: string | null;
   setNotice: (notice: string | null) => void;
   signInLocal: (viewer: Viewer) => void;
@@ -67,7 +67,7 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
   const [bootId, setBootId] = useState(0);
   const [ready, setReady] = useState(false);
   const [viewer, setViewer] = useState<Viewer | null>(null);
-  const [tables, setTables] = useState<{ code: string; name: string }[]>([]);
+  const [tables, setTables] = useState<TableSummary[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const mode = chooseTableMode({ configured: Boolean(remote), demo: forceLocal });
 

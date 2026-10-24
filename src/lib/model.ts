@@ -146,6 +146,13 @@ export type Member = {
   email: string;
 };
 
+/** A table this person belongs to. The creator's name tells same-named tables apart. */
+export type TableSummary = {
+  code: string;
+  name: string;
+  creatorName: string;
+};
+
 export type TableMeta = {
   id: string;
   code: string;

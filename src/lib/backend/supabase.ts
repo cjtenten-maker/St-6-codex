@@ -615,9 +615,24 @@ export function createSupabaseApi() {
       fail(error);
     },
     async listTables() {
-      const { data, error } = await getSupabase().from("tables").select("code, name").order("created_at", { ascending: false });
+      const supabase = getSupabase();
+      const { data, error } = await supabase.from("tables").select("code, name, created_by").order("created_at", { ascending: false });
       fail(error);
-      return (data ?? []) as { code: string; name: string }[];
+      const rows = (data ?? []) as { code: string; name: string; created_by: string }[];
+      const ids = [...new Set(rows.map((row) => row.created_by).filter(Boolean))];
+      const names = new Map<string, string>();
+      if (ids.length) {
+        const profiles = await supabase.from("profiles").select("id, display_name").in("id", ids);
+        fail(profiles.error);
+        for (const profile of (profiles.data ?? []) as { id: string; display_name: string }[]) {
+          names.set(profile.id, profile.display_name);
+        }
+      }
+      return rows.map((row) => ({
+        code: row.code,
+        name: row.name,
+        creatorName: names.get(row.created_by) ?? "someone who left",
+      }));
     },
     async createTable(name: string, seed: boolean) {
       const viewer = await this.getViewer();

@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DEMO_PLAYERS } from "@/lib/ids";
-import { hasJoinedTable } from "@/lib/table/identity";
+import { hasJoinedTable, lastTable, rememberTable } from "@/lib/table/identity";
 import { useCodex } from "./CodexProvider";
 import { MagicLinkForm } from "./MagicLinkForm";
 import { Button, Card, Kicker, TextField } from "./ui";
@@ -19,11 +19,31 @@ export function HomeScreen() {
   const [joinCode, setJoinCode] = useState("");
   const [seed, setSeed] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(params.get("create") === "1");
   const [confirmCreate, setConfirmCreate] = useState(false);
   const [pendingImport, setPendingImport] = useState<string | null>(null);
 
-  const go = (href: string) => router.push(next && next.startsWith("/t/") ? next : href);
+  const go = (href: string) => {
+    const match = href.match(/^\/t\/([A-Za-z0-9]{4,8})/);
+    if (match) rememberTable(match[1]);
+    router.push(next && next.startsWith("/t/") ? next : href);
+  };
+
+  const joinRequested = params.get("join") === "1";
+  const createRequested = params.get("create") === "1";
+
+  useEffect(() => {
+    if (joinRequested) document.getElementById("join-code")?.focus();
+  }, [joinRequested, codex.viewer]);
+
+  useEffect(() => {
+    if (!codex.ready || !codex.viewer) return;
+    if (joinRequested || createRequested || params.get("next")) return;
+    const saved = lastTable();
+    if (!saved) return;
+    if (!codex.tables.some((table) => table.code.toUpperCase() === saved)) return;
+    router.replace(`/t/${saved}`);
+  }, [codex.ready, codex.tables, codex.viewer, createRequested, joinRequested, params, router]);
 
   const run = async (work: () => Promise<void> | void) => {
     setBusy(true);
@@ -172,7 +192,10 @@ export function HomeScreen() {
                 .map((table) => (
                   <Button key={table.code} tone="ghost" onClick={() => go(`/t/${table.code}`)}>
                     {table.name}
-                    <span className="text-mute"> · {table.code}</span>
+                    <span className="text-mute">
+                      {" "}
+                      · {table.code} · {table.creatorName}
+                    </span>
                   </Button>
                 ))}
               {!hasJoinedTable(codex.tables) ? (
