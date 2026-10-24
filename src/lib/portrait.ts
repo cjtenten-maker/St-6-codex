@@ -1,5 +1,7 @@
 import { RuleError } from "./rules/errors";
 
+export type ArtBucket = "character-art" | "trouble-art";
+
 /** Originals larger than this are refused before the browser decodes them. */
 export const PORTRAIT_MAX_BYTES = 5 * 1024 * 1024;
 

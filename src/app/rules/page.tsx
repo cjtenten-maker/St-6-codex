@@ -36,7 +36,7 @@ export default function RulesPage() {
       </Card>
       <Card>
         <Kicker>The table</Kicker>
-        <p className="mt-2">No initiative roll. The GM picks which side goes first. Players reorder themselves, then trouble goes. Twelve heroes can sit. Forty-eight can be saved. Someone sitting out keeps their hit points, mana, hero points, and notes. Rests, a new session, and trouble only touch the seats. The GM's own characters sit out. Up to four people can be marked GM-eligible, and the notes on the screen pass to the next GM.</p>
+        <p className="mt-2">No initiative roll. The GM picks which side goes first. Players reorder themselves, then trouble goes. Twelve heroes can sit. Forty-eight can be saved. Someone sitting out keeps their hit points, mana, hero points, and notes. Rests, a new session, and trouble only touch the seats. The GM's own characters sit out. Up to four people can be marked GM-eligible, and the notes on the screen pass to the next GM. Saved trouble lives in a library on that screen. Adding it to the scene makes a copy. The library stays with the table, and only the current GM can open it.</p>
       </Card>
 
       <h2 className="mt-4 font-display text-3xl">Weapons</h2>

@@ -193,11 +193,14 @@ describe("two players and a GM handoff", () => {
     expect(full.includeGmNotes).toBe(true);
     expect(full.state.table.gmNotes).toBe("Private.");
     expect(full.state.characters).toHaveLength(10);
+    expect(full.state.trouble.some((item) => item.name === "Wolf")).toBe(true);
     const hidden = parseCodexFile(exportTable(present(state, ID.trish), false));
     expect(hidden.state.table.gmNotes).toBe("");
     expect(hidden.includeGmNotes).toBe(false);
     expect(hidden.state.characters).toHaveLength(0);
+    expect(hidden.state.trouble).toEqual([]);
     expect(JSON.stringify(hidden)).not.toContain("Judge's Edge");
+    expect(JSON.stringify(hidden)).not.toContain("Cult speaker");
   });
 
   it("puts the suit on and off without treating it as a rest bonus", () => {
@@ -340,12 +343,14 @@ describe("character privacy", () => {
     state = run(state, { type: "claimGm" }, ID.trish, "handoff");
     const oldGm = present(state, ID.corbin);
     expect(oldGm.table.gmNotes).toBe("");
+    expect(oldGm.trouble).toEqual([]);
     expect(character(oldGm, ID.elowynne).concealed).toBe(true);
     expect(character(oldGm, ID.elowynne).notes).toBe("");
     expect(character(oldGm, ID.naibroch).concealed).toBe(false);
     expect(character(oldGm, ID.naibroch).ownerId).toBe(ID.corbin);
     const newGm = present(state, ID.trish);
     expect(newGm.table.gmNotes.length).toBeGreaterThan(0);
+    expect(newGm.trouble.some((item) => item.name === "Wolf")).toBe(true);
     expect(character(newGm, ID.naibroch).concealed).toBe(false);
     expect(character(newGm, ID.elowynne).notes).toContain("secret name");
   });
@@ -357,5 +362,55 @@ describe("character privacy", () => {
     expect(card.down).toBe(true);
     expect(card.hpMax).toBe(0);
     expect(card.concealed).toBe(true);
+  });
+});
+
+describe("trouble library", () => {
+  it("keeps templates with the GM and copies numbered foes into the scene", () => {
+    let state = createDemoState();
+    expect(present(state, ID.trish).trouble).toEqual([]);
+    expect(present(state, null).troubleFolders).toEqual([]);
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    const template = state.trouble.find((item) => item.id === ID.bandit);
+    if (!template) throw new Error("bandit");
+    expect(() => applyAction(state, { type: "spawnTrouble", troubleId: ID.bandit, count: 3 }, ctx(ID.trish, ["x"]))).toThrow(/GM/);
+    expect(() => run(state, { type: "removeTrouble", troubleId: ID.wolf }, ID.trish)).toThrow(/GM/);
+
+    state = applyAction(state, { type: "spawnTrouble", troubleId: ID.bandit, count: 3 }, ctx(ID.corbin, ["a", "b", "c", "log"]));
+    expect(state.foes.map((foe) => foe.name)).toEqual(["Bandit 1", "Bandit 2", "Bandit 3"]);
+    expect(state.foes[0]?.hp).toBe(template.hp);
+    expect(state.foes[0]?.hpMax).toBe(template.hp);
+    expect(state.foes[0]?.ac).toBe(template.ac);
+    expect(state.foes[0]?.attackBonus).toBe(template.attackBonus);
+    expect(state.foes[0]?.damage).toBe(template.damage);
+    expect(state.foes[0]?.notes).toContain("Short sword");
+    expect(state.trouble.find((item) => item.id === ID.bandit)).toEqual(template);
+
+    state = applyAction(state, { type: "spawnTrouble", troubleId: ID.bandit, count: 1 }, ctx(ID.corbin, ["d", "log2"]));
+    expect(state.foes.at(-1)?.name).toBe("Bandit");
+    state = applyAction(state, { type: "spawnTrouble", troubleId: ID.bandit, count: 1 }, ctx(ID.corbin, ["e", "log3"]));
+    expect(state.foes.at(-1)?.name).toBe("Bandit 4");
+
+    state = run(state, { type: "saveTrouble", trouble: { ...template, hp: 40, name: "Bandit" } }, ID.corbin, "edit");
+    expect(state.trouble.find((item) => item.id === ID.bandit)?.hp).toBe(40);
+    expect(state.foes[0]?.hp).toBe(template.hp);
+
+    state = run(state, { type: "removeFolder", folderId: ID.folderBandits }, ID.corbin, "folder");
+    expect(state.troubleFolders.some((folder) => folder.id === ID.folderBandits)).toBe(false);
+    expect(state.trouble.find((item) => item.id === ID.bandit)?.folderId).toBeNull();
+    expect(state.trouble.find((item) => item.id === ID.captain)?.folderId).toBeNull();
+
+    state = run(state, { type: "claimGm" }, ID.trish, "handoff");
+    expect(present(state, ID.corbin).trouble).toEqual([]);
+    expect(present(state, ID.trish).trouble.find((item) => item.id === ID.wolf)?.name).toBe("Wolf");
+    expect(present(state, ID.trish).foes).toHaveLength(5);
+  });
+
+  it("refuses a blank name and a pile bigger than the scene tap allows", () => {
+    const state = run(createDemoState(), { type: "claimGm" }, ID.corbin, "gm");
+    const wolf = state.trouble.find((item) => item.id === ID.wolf);
+    if (!wolf) throw new Error("wolf");
+    expect(() => run(state, { type: "saveTrouble", trouble: { ...wolf, name: "  " } }, ID.corbin)).toThrow(/name/i);
+    expect(() => applyAction(state, { type: "spawnTrouble", troubleId: ID.wolf, count: 13 }, ctx(ID.corbin, ["x"]))).toThrow(/12/);
   });
 });

@@ -3,10 +3,12 @@ import type { EmailOtpType, SupabaseClient } from "@supabase/supabase-js";
 import { friendlySendError, prepareBrowserLocation, type AuthCallbackClient } from "../auth/callback";
 import { createEmailLinkClient, verifyEmailCode } from "../auth/email-link";
 import { companyForTable } from "../data/company";
-import type { Action, Character, Foe, LogEntry, Member, TableState } from "../model";
+import { sampleLibraryFresh } from "../data/trouble";
+import type { Action, Character, Foe, LogEntry, Member, TableState, Trouble, TroubleFolder } from "../model";
 import { RuleError } from "../rules/errors";
 import { exportTable, parseCodexFile } from "../table/export";
-import { downscalePortrait, portraitObjectName } from "../portrait";
+import { LIBRARY_WAITING, libraryOf } from "../table/library";
+import { downscalePortrait, portraitObjectName, type ArtBucket } from "../portrait";
 import { characterFromCard, present } from "../table/present";
 import { applyAction } from "../table/reducer";
 import type { Viewer } from "./local";
@@ -44,6 +46,22 @@ type CardRow = {
 };
 
 type FoeRow = { id: string; table_id: string; foe: Omit<Foe, "id"> };
+type FolderRow = { id: string; name: string; sort: number };
+type TroubleRow = {
+  id: string;
+  folder_id: string | null;
+  name: string;
+  hp: number;
+  ac: number;
+  attack_bonus: number;
+  damage: string;
+  abilities: string;
+  notes: string;
+  energy_shield: boolean;
+  ignore_ac: number | null;
+  portrait_path: string | null;
+  sort: number;
+};
 type LogRow = { id: string; table_id: string; session_id: string | null; entry: LogEntry };
 type MemberRow = { profile_id: string; profiles: { display_name: string; email: string | null } | { display_name: string; email: string | null }[] | null };
 
@@ -94,6 +112,13 @@ function fail(error: { message: string } | null): void {
   if (error) throw new RuleError(error.message);
 }
 
+/** PostgREST reports a table the migration has not created yet. */
+export function isMissingRelation(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST205" || error.code === "42P01") return true;
+  return /schema cache|could not find the table|relation .* does not exist/i.test(error.message ?? "");
+}
+
 function characterFromRow(row: CharacterRow): Character {
   const sheet = { ...(row.sheet as Character) };
   delete sheet.concealed;
@@ -118,19 +143,62 @@ function characterToRow(tableId: string, character: Character): CharacterRow {
   return { id, table_id: tableId, owner_id: ownerId, seated, portrait_path: portraitPath ?? null, sheet };
 }
 
+function troubleFromRow(row: TroubleRow): Trouble {
+  return {
+    id: row.id,
+    folderId: row.folder_id,
+    name: row.name,
+    hp: row.hp,
+    ac: row.ac,
+    attackBonus: row.attack_bonus,
+    damage: row.damage,
+    abilities: row.abilities ?? "",
+    notes: row.notes ?? "",
+    energyShield: row.energy_shield,
+    ignoreAc: row.ignore_ac ?? undefined,
+    portraitPath: row.portrait_path,
+    sort: row.sort ?? 0,
+  };
+}
+
+function troubleToRow(tableId: string, trouble: Trouble) {
+  return {
+    id: trouble.id,
+    table_id: tableId,
+    folder_id: trouble.folderId,
+    name: trouble.name,
+    hp: trouble.hp,
+    ac: trouble.ac,
+    attack_bonus: trouble.attackBonus,
+    damage: trouble.damage,
+    abilities: trouble.abilities,
+    notes: trouble.notes,
+    energy_shield: trouble.energyShield,
+    ignore_ac: trouble.ignoreAc ?? null,
+    portrait_path: trouble.portraitPath && !trouble.portraitPath.startsWith("data:") ? trouble.portraitPath : null,
+    sort: trouble.sort,
+  };
+}
+
+function folderToRow(tableId: string, folder: TroubleFolder) {
+  return { id: folder.id, table_id: tableId, name: folder.name, sort: folder.sort };
+}
+
 async function loadFull(code: string): Promise<TableState | null> {
   const supabase = getSupabase();
   const { data: table, error } = await supabase.from("tables").select("*").eq("code", code.toUpperCase()).maybeSingle();
   fail(error);
   if (!table) return null;
   const row = table as TableRow;
-  const [members, characters, cards, foes, logs, notes] = await Promise.all([
+  const [members, characters, cards, foes, logs, notes, folders, trouble] = await Promise.all([
     supabase.from("table_members").select("profile_id, profiles(display_name, email)").eq("table_id", row.id),
     supabase.from("characters").select("*").eq("table_id", row.id),
     supabase.from("character_cards").select("id, name, seated, down, claimed, portrait_path").eq("table_id", row.id),
     supabase.from("foes").select("*").eq("table_id", row.id),
     supabase.from("log_entries").select("*").eq("table_id", row.id).order("created_at", { ascending: true }),
     supabase.from("gm_notes").select("body").eq("table_id", row.id).maybeSingle(),
+    supabase.from("trouble_folders").select("id, name, sort").eq("table_id", row.id).order("sort"),
+    supabase.from("trouble").select("*").eq("table_id", row.id).order("sort"),
   ]);
   fail(members.error);
   fail(characters.error);
@@ -143,6 +211,11 @@ async function loadFull(code: string): Promise<TableState | null> {
   fail(foes.error);
   fail(logs.error);
   if (notes.error && notes.error.code !== "PGRST116") fail(notes.error);
+  const libraryMissing = isMissingRelation(folders.error) || isMissingRelation(trouble.error);
+  if (!libraryMissing) {
+    fail(folders.error);
+    fail(trouble.error);
+  }
 
   return {
     table: {
@@ -169,6 +242,11 @@ async function loadFull(code: string): Promise<TableState | null> {
     }),
     characters: mergeCharacters((characters.data ?? []) as CharacterRow[], (cards.data ?? []) as CardRow[]),
     foes: ((foes.data ?? []) as FoeRow[]).map((foe) => ({ ...foe.foe, id: foe.id })),
+    trouble: libraryMissing ? [] : ((trouble.data ?? []) as TroubleRow[]).map(troubleFromRow),
+    troubleFolders: libraryMissing
+      ? []
+      : ((folders.data ?? []) as FolderRow[]).map((folder) => ({ id: folder.id, name: folder.name, sort: folder.sort })),
+    troubleReady: !libraryMissing,
     log: ((logs.data ?? []) as LogRow[]).map((entry) => entry.entry),
   };
 }
@@ -234,7 +312,63 @@ async function persistDiff(prev: TableState, next: TableState): Promise<void> {
 
   await diffCharacters(prev, next);
   await diffFoes(prev, next);
+  await diffLibrary(prev, next);
   await diffLog(prev, next);
+}
+
+async function diffLibrary(prev: TableState, next: TableState): Promise<void> {
+  if (prev.troubleReady === false || next.troubleReady === false) {
+    if (JSON.stringify(libraryOf(prev)) !== JSON.stringify(libraryOf(next))) throw new RuleError(LIBRARY_WAITING);
+    return;
+  }
+  const before = libraryOf(prev);
+  const after = libraryOf(next);
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  const supabase = getSupabase();
+  const tableId = next.table.id;
+
+  const seenFolders = new Map(before.troubleFolders.map((folder) => [folder.id, folder]));
+  for (const folder of after.troubleFolders) {
+    const old = seenFolders.get(folder.id);
+    if (!old) {
+      const { error } = await supabase.from("trouble_folders").insert(folderToRow(tableId, folder));
+      if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+      fail(error);
+    } else if (old.name !== folder.name || old.sort !== folder.sort) {
+      const { error } = await supabase.from("trouble_folders").update({ name: folder.name, sort: folder.sort }).eq("id", folder.id);
+      if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+      fail(error);
+    }
+    seenFolders.delete(folder.id);
+  }
+
+  const seenTrouble = new Map(before.trouble.map((item) => [item.id, item]));
+  for (const item of after.trouble) {
+    const old = seenTrouble.get(item.id);
+    const row = troubleToRow(tableId, item);
+    if (!old) {
+      const { error } = await supabase.from("trouble").insert(row);
+      if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+      fail(error);
+    } else if (JSON.stringify(troubleToRow(tableId, old)) !== JSON.stringify(row)) {
+      const { id, table_id, ...patch } = row;
+      void table_id;
+      const { error } = await supabase.from("trouble").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+      if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+      fail(error);
+    }
+    seenTrouble.delete(item.id);
+  }
+  for (const leftover of seenTrouble.values()) {
+    const { error } = await supabase.from("trouble").delete().eq("id", leftover.id);
+    if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+    fail(error);
+  }
+  for (const leftover of seenFolders.values()) {
+    const { error } = await supabase.from("trouble_folders").delete().eq("id", leftover.id);
+    if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+    fail(error);
+  }
 }
 
 async function diffCharacters(prev: TableState, next: TableState): Promise<void> {
@@ -314,6 +448,38 @@ async function diffLog(prev: TableState, next: TableState): Promise<void> {
     })),
   );
   fail(error);
+}
+
+async function writeLibrary(tableId: string, folders: TroubleFolder[], trouble: Trouble[]): Promise<void> {
+  const supabase = getSupabase();
+  if (folders.length) {
+    const { error } = await supabase.from("trouble_folders").insert(folders.map((folder) => folderToRow(tableId, folder)));
+    if (isMissingRelation(error)) return;
+    fail(error);
+  }
+  if (!trouble.length) return;
+  const { error } = await supabase.from("trouble").insert(trouble.map((item) => troubleToRow(tableId, { ...item, portraitPath: null })));
+  if (isMissingRelation(error)) return;
+  fail(error);
+}
+
+async function seedTroubleLibrary(tableId: string): Promise<void> {
+  const library = sampleLibraryFresh();
+  await writeLibrary(tableId, library.troubleFolders, library.trouble);
+}
+
+async function importTroubleLibrary(tableId: string, state: TableState): Promise<void> {
+  const library = libraryOf(state);
+  if (!library.trouble.length && !library.troubleFolders.length) return;
+  const folderIds = new Map(library.troubleFolders.map((folder) => [folder.id, crypto.randomUUID()]));
+  const folders = library.troubleFolders.map((folder) => ({ ...folder, id: folderIds.get(folder.id) ?? crypto.randomUUID() }));
+  const trouble = library.trouble.map((item) => ({
+    ...item,
+    id: crypto.randomUUID(),
+    folderId: item.folderId ? (folderIds.get(item.folderId) ?? null) : null,
+    portraitPath: null,
+  }));
+  await writeLibrary(tableId, folders, trouble);
 }
 
 function makeCode(): string {
@@ -432,17 +598,29 @@ export function createSupabaseApi() {
           .from("characters")
           .insert(characters.map((character) => characterToRow(tableId, character)));
         fail(insertError);
-        const { error: orderError } = await getSupabase().rpc("save_table_meta", {
-          p_table_id: tableId,
-          p_scene: scene,
-          p_side: null,
-          p_turn: characters.map((character) => character.id),
-          p_session_active: false,
-          p_session_id: null,
-          p_current_gm: null,
-          p_eligible: [viewer.id],
-        });
-        fail(orderError);
+        const turn = characters.map((character) => character.id);
+        const meta = (currentGm: string | null) =>
+          getSupabase().rpc("save_table_meta", {
+            p_table_id: tableId,
+            p_scene: scene,
+            p_side: null,
+            p_turn: turn,
+            p_session_active: false,
+            p_session_id: null,
+            p_current_gm: currentGm,
+            p_eligible: [viewer.id],
+          });
+        const { error: holdError } = await meta(viewer.id);
+        fail(holdError);
+        let seedError: unknown = null;
+        try {
+          await seedTroubleLibrary(tableId);
+        } catch (error) {
+          seedError = error;
+        }
+        const { error: releaseError } = await meta(null);
+        fail(releaseError);
+        if (seedError) throw seedError;
       }
       return code;
     },
@@ -450,12 +628,39 @@ export function createSupabaseApi() {
       const { error } = await getSupabase().rpc("join_table", { p_code: code.toUpperCase() });
       fail(error);
     },
-    async portraitUrl(path: string) {
+    async portraitUrl(path: string, bucket: ArtBucket = "character-art") {
       if (path.startsWith("data:")) return path;
-      const { data, error } = await getSupabase().storage.from("character-art").createSignedUrl(path, 60 * 60);
+      const { data, error } = await getSupabase().storage.from(bucket).createSignedUrl(path, 60 * 60);
       fail(error);
-      if (!data?.signedUrl) throw new RuleError("That portrait didn't load.");
+      if (!data?.signedUrl) throw new RuleError("That picture didn't load.");
       return data.signedUrl;
+    },
+    async setTroubleArt(code: string, troubleId: string, file: File | null) {
+      const viewer = await this.getViewer();
+      if (!viewer) throw new RuleError("Sign in first.");
+      const full = await loadFull(code);
+      if (!full) throw new RuleError("No table uses that code.");
+      if (full.troubleReady === false) throw new RuleError(LIBRARY_WAITING);
+      if (full.table.currentGmId !== viewer.id) throw new RuleError("That belongs to the GM tonight.");
+      const trouble = full.trouble.find((item) => item.id === troubleId);
+      if (!trouble) throw new RuleError("Save the trouble before adding a picture.");
+      const previous = trouble.portraitPath && !trouble.portraitPath.startsWith("data:") ? trouble.portraitPath : null;
+      let portraitPath: string | null = null;
+      if (file) {
+        const blob = await downscalePortrait(file);
+        portraitPath = portraitObjectName(full.table.id, trouble.id);
+        const { error } = await getSupabase().storage.from("trouble-art").upload(portraitPath, blob, {
+          contentType: "image/jpeg",
+          cacheControl: "3600",
+          upsert: false,
+        });
+        fail(error);
+      }
+      const next = await this.dispatch(code, { type: "setTroubleArt", troubleId, portraitPath }, viewer);
+      if (previous && previous !== portraitPath) {
+        await getSupabase().storage.from("trouble-art").remove([previous]);
+      }
+      return next;
     },
     async setPortrait(code: string, characterId: string, file: File | null) {
       const viewer = await this.getViewer();
@@ -502,8 +707,16 @@ export function createSupabaseApi() {
         .on("postgres_changes", { event: "*", schema: "public", table: "table_members", filter: `table_id=eq.${tableId}` }, listener)
         .on("postgres_changes", { event: "*", schema: "public", table: "tables", filter: `id=eq.${tableId}` }, listener)
         .subscribe();
+      // A separate channel so a database that has not applied migration 003
+      // does not take the rest of the table's realtime with it.
+      const library = getSupabase()
+        .channel(`trouble-${tableId}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "trouble", filter: `table_id=eq.${tableId}` }, listener)
+        .on("postgres_changes", { event: "*", schema: "public", table: "trouble_folders", filter: `table_id=eq.${tableId}` }, listener)
+        .subscribe();
       return () => {
         void getSupabase().removeChannel(channel);
+        void getSupabase().removeChannel(library);
       };
     },
     async dispatch(code: string, action: Action, viewer: Viewer) {
@@ -581,6 +794,7 @@ export function createSupabaseApi() {
           .insert(file.state.foes.map((foe) => ({ id: crypto.randomUUID(), table_id: full.table.id, foe: { ...foe, id: undefined } })));
         fail(error);
       }
+      if (file.includeGmNotes) await importTroubleLibrary(full.table.id, file.state);
       const { error: releaseError } = await getSupabase().rpc("save_table_meta", {
         p_table_id: full.table.id,
         p_scene: scene,

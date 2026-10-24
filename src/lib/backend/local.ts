@@ -1,9 +1,11 @@
 import { companyForTable } from "../data/company";
+import { sampleLibrary, sampleLibraryFresh } from "../data/trouble";
 import { DEMO_CODE } from "../ids";
 import type { Action, Member, TableState } from "../model";
 import { RuleError } from "../rules/errors";
 import { createDemoState } from "../table/demo";
 import { exportTable, parseCodexFile } from "../table/export";
+import { libraryOf } from "../table/library";
 import { present } from "../table/present";
 import { applyAction } from "../table/reducer";
 import type { Store } from "./memory";
@@ -30,10 +32,20 @@ export function createLocalApi(store: Store) {
     store.write({ tables: { ...db.tables, [code]: next } });
   }
 
+  function hydrate(state: TableState): TableState {
+    const hasLibrary = Array.isArray(state.trouble) && Array.isArray(state.troubleFolders);
+    if (hasLibrary) return state;
+    if (state.table.code === DEMO_CODE) {
+      const library = sampleLibrary();
+      return { ...state, trouble: library.trouble, troubleFolders: library.troubleFolders };
+    }
+    return { ...state, ...libraryOf(state) };
+  }
+
   function readFull(code: string): TableState {
     const table = store.read().tables[code.toUpperCase()];
     if (!table) throw new RuleError("No table uses that code.");
-    return table;
+    return hydrate(table);
   }
 
   return {
@@ -72,6 +84,7 @@ export function createLocalApi(store: Store) {
         code = Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) => ALPHABET[byte % ALPHABET.length]).join("");
       } while (taken.has(code));
       const characters = seed ? companyForTable() : [];
+      const library = seed ? sampleLibraryFresh() : { trouble: [], troubleFolders: [] };
       const state: TableState = {
         table: {
           id: crypto.randomUUID(),
@@ -94,6 +107,8 @@ export function createLocalApi(store: Store) {
         members: [who],
         characters,
         foes: [],
+        trouble: library.trouble,
+        troubleFolders: library.troubleFolders,
         log: [],
       };
       writeTable(code, state);
@@ -102,7 +117,7 @@ export function createLocalApi(store: Store) {
     load(code: string): TableState | null {
       const table = store.read().tables[code.toUpperCase()];
       if (!table) return null;
-      return present(table, viewer?.id ?? null);
+      return present(hydrate(table), viewer?.id ?? null);
     },
     dispatch(code: string, action: Action): TableState {
       const who = requireViewer();
@@ -130,8 +145,15 @@ export function createLocalApi(store: Store) {
       let state = file.state;
       const existing = store.read().tables[key];
       if (!file.includeGmNotes && existing) {
-        state = { ...state, table: { ...state.table, gmNotes: existing.table.gmNotes } };
+        const kept = hydrate(existing);
+        state = {
+          ...state,
+          table: { ...state.table, gmNotes: kept.table.gmNotes },
+          trouble: kept.trouble,
+          troubleFolders: kept.troubleFolders,
+        };
       }
+      state = hydrate(state);
       if (!state.members.some((member) => member.id === who.id)) {
         state = { ...state, members: [...state.members, who] };
       }

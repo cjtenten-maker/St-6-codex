@@ -21,7 +21,7 @@ export default function TermsPage() {
       <Card>
         <p>ST-6 Codex is provided as-is for personal use by Corbin Young’s gaming group.</p>
         <p className="mt-3">
-          It is a hobby app for one home game. It comes with no warranty. You are responsible for what you write on a sheet, in a note, or in a portrait.
+          It is a hobby app for one home game. It comes with no warranty. You are responsible for what you write on a sheet, in a note, in a portrait, or on a picture of trouble.
         </p>
         <p className="mt-3">
           Questions:{" "}

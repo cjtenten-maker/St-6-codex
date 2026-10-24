@@ -1,9 +1,11 @@
 import { companyCharacters } from "../data/company";
+import { sampleLibrary } from "../data/trouble";
 import { DEMO_CODE, DEMO_PLAYERS, ID } from "../ids";
 import type { TableState } from "../model";
 
 export function createDemoState(): TableState {
   const characters = companyCharacters();
+  const library = sampleLibrary();
   return {
     table: {
       id: ID.table,
@@ -24,6 +26,8 @@ export function createDemoState(): TableState {
     members: DEMO_PLAYERS.map((player) => ({ ...player })),
     characters,
     foes: [],
+    trouble: library.trouble,
+    troubleFolders: library.troubleFolders,
     log: [],
   };
 }

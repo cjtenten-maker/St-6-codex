@@ -67,4 +67,38 @@ describe("local table, two phones on one machine", () => {
     expect(corbin.load("SEAL6")?.characters.find((character) => character.id === ID.naibroch)?.concealed).toBe(false);
     expect(corbin.load("SEAL6")?.characters.find((character) => character.id === ID.naibroch)?.ownerId).toBe(ID.corbin);
   });
+
+  it("shows the trouble library only to whoever currently has the screen", () => {
+    const store = createMemoryStore();
+    const corbin = createLocalApi(store);
+    const trish = createLocalApi(store);
+    corbin.setViewer({ ...DEMO_PLAYERS[0] });
+    trish.setViewer({ ...DEMO_PLAYERS[1] });
+    corbin.ensureDemo();
+
+    expect(corbin.load("SEAL6")?.trouble).toEqual([]);
+    expect(trish.load("SEAL6")?.troubleFolders).toEqual([]);
+    corbin.dispatch("SEAL6", { type: "claimGm" });
+    expect(corbin.load("SEAL6")?.trouble.map((item) => item.name)).toContain("Cave bear");
+    expect(trish.load("SEAL6")?.trouble).toEqual([]);
+    expect(trish.exportJson("SEAL6")).not.toContain("Cult speaker");
+
+    const bandit = corbin.load("SEAL6")?.trouble.find((item) => item.name === "Bandit");
+    if (!bandit) throw new Error("bandit");
+    corbin.dispatch("SEAL6", { type: "setTroubleArt", troubleId: bandit.id, portraitPath: "data:image/jpeg;base64,bandit" });
+    corbin.dispatch("SEAL6", { type: "spawnTrouble", troubleId: bandit.id, count: 3 });
+    const scene = trish.load("SEAL6");
+    expect(scene?.foes.map((foe) => foe.name)).toEqual(["Bandit 1", "Bandit 2", "Bandit 3"]);
+    expect(scene?.trouble).toEqual([]);
+    expect(corbin.load("SEAL6")?.trouble.find((item) => item.id === bandit.id)?.hp).toBe(bandit.hp);
+    expect(corbin.load("SEAL6")?.trouble.find((item) => item.id === bandit.id)?.portraitPath).toContain("data:image");
+    expect(corbin.exportJson("SEAL6")).toContain("Cult speaker");
+
+    trish.dispatch("SEAL6", { type: "claimGm" });
+    expect(trish.load("SEAL6")?.trouble.map((item) => item.name)).toContain("Cave bear");
+    expect(trish.load("SEAL6")?.trouble.find((item) => item.name === "Bandit")?.portraitPath).toContain("data:image");
+    expect(corbin.load("SEAL6")?.trouble).toEqual([]);
+    expect(corbin.exportJson("SEAL6")).not.toContain("Cult speaker");
+    expect(() => corbin.dispatch("SEAL6", { type: "spawnTrouble", troubleId: bandit.id, count: 1 })).toThrow(/GM/);
+  });
 });
