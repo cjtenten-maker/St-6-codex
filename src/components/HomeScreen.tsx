@@ -221,6 +221,15 @@ export function HomeScreen() {
         </Link>
       )}
 
+      <footer className="mt-auto flex flex-wrap gap-x-4 gap-y-1 text-xs text-mute">
+        <Link href="/privacy" className="underline decoration-line underline-offset-4">
+          Privacy
+        </Link>
+        <Link href="/terms" className="underline decoration-line underline-offset-4">
+          Terms
+        </Link>
+      </footer>
+
       <p className="text-xs text-mute">
         {codex.mode === "local"
           ? "Running locally in this browser. GM notes are hidden in the app until you hold the screen. Supabase is what locks them for real."
