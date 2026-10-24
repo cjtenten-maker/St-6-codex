@@ -1,34 +1,47 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getSupabase, supabaseConfigured } from "@/lib/backend/supabase";
+import { consumeAuthCallback } from "@/lib/auth/callback";
+import { authCallbackClient, supabaseConfigured } from "@/lib/backend/supabase";
+import { MagicLinkForm } from "@/components/MagicLinkForm";
+import { Card, Kicker } from "@/components/ui";
 
 export default function AuthCallback() {
-  const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabaseConfigured()) {
-      router.replace("/");
+      window.location.replace("/");
       return;
     }
-    const supabase = getSupabase();
-    const code = new URLSearchParams(window.location.search).get("code");
-    const finish = () => router.replace("/");
-    if (!code) {
-      finish();
-      return;
-    }
-    void supabase.auth.exchangeCodeForSession(code).then(({ error: authError }) => {
-      if (authError) setError(authError.message);
-      else finish();
+    let cancel = false;
+    void consumeAuthCallback(authCallbackClient()).then((result) => {
+      if (cancel) return;
+      if (result.ok) {
+        window.location.replace(result.next);
+        return;
+      }
+      setMessage(result.message);
     });
-  }, [router]);
+    return () => {
+      cancel = true;
+    };
+  }, []);
 
   return (
-    <main className="mx-auto max-w-lg px-4 py-16">
-      <p>{error ?? "Signing you in…"}</p>
+    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-5 px-4 py-8">
+      <header>
+        <Kicker>Sign in</Kicker>
+        <h1 className="mt-1 font-display text-4xl font-medium tracking-tight text-paper">
+          {message ? "Send a new link" : "Signing you in"}
+        </h1>
+        <p className="mt-2 text-mute">{message ?? "Finishing the email link on this device."}</p>
+      </header>
+      {message ? (
+        <Card>
+          <MagicLinkForm />
+        </Card>
+      ) : null}
     </main>
   );
 }

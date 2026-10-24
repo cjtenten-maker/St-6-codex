@@ -4,15 +4,19 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useRouter } from "next/navigation";
 import { createLocalApi, type Viewer } from "@/lib/backend/local";
 import { createBrowserStore } from "@/lib/backend/memory";
-import { createSupabaseApi, supabaseConfigured } from "@/lib/backend/supabase";
+import { consumeAuthCallback } from "@/lib/auth/callback";
+import { chooseTableMode } from "@/lib/auth/mode";
+import { authCallbackClient, createSupabaseApi, supabaseConfigured } from "@/lib/backend/supabase";
 import { DEMO_CODE } from "@/lib/ids";
 import type { Action, TableState } from "@/lib/model";
 import { RuleError } from "@/lib/rules/errors";
 
 const VIEWER_KEY = "st6-viewer";
+const DEMO_KEY = "st6-force-local";
 
 type Codex = {
   mode: "local" | "supabase";
+  supabaseConfigured: boolean;
   ready: boolean;
   viewer: Viewer | null;
   tables: { code: string; name: string }[];
@@ -21,6 +25,7 @@ type Codex = {
   signInLocal: (viewer: Viewer) => void;
   signInGuest: (name: string) => void;
   signInEmail: (email: string) => Promise<void>;
+  signInWithCode: (email: string, code: string) => Promise<void>;
   signInGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateName: (name: string) => Promise<void>;
@@ -33,6 +38,7 @@ type Codex = {
   exportJson: (code: string) => Promise<string>;
   importTable: (raw: string) => Promise<string>;
   useLocalDemo: () => void;
+  exitLocalDemo: () => void;
 };
 
 const CodexContext = createContext<Codex | null>(null);
@@ -54,11 +60,12 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
   const local = useMemo(() => createLocalApi(createBrowserStore()), []);
   const remote = useMemo(() => (remoteAvailable ? createSupabaseApi() : null), [remoteAvailable]);
   const [forceLocal, setForceLocal] = useState(false);
+  const [bootId, setBootId] = useState(0);
   const [ready, setReady] = useState(false);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [tables, setTables] = useState<{ code: string; name: string }[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const mode: "local" | "supabase" = remote && !forceLocal ? "supabase" : "local";
+  const mode = chooseTableMode({ configured: Boolean(remote), demo: forceLocal });
 
   const refreshTables = useCallback(async () => {
     if (mode === "local") {
@@ -75,33 +82,56 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let stop = () => {};
+    let cancel = false;
     const boot = async () => {
-      const forced = sessionStorage.getItem("st6-force-local") === "1";
-      setForceLocal(forced);
-      if (remote && !forced) {
-        const current = await remote.getViewer();
-        setViewer(current);
-        stop = remote.onAuth(setViewer);
-      } else {
-        const raw = sessionStorage.getItem(VIEWER_KEY);
-        if (raw) {
+      const forced = sessionStorage.getItem(DEMO_KEY) === "1";
+      if (!cancel) setForceLocal(forced);
+      try {
+        if (remote && !forced) {
           try {
-            const stored = JSON.parse(raw) as Viewer;
-            local.setViewer(stored);
-            setViewer(stored);
-          } catch {
-            sessionStorage.removeItem(VIEWER_KEY);
+            const callback = await consumeAuthCallback(authCallbackClient());
+            if (!cancel && !callback.ok && !window.location.pathname.startsWith("/auth/callback")) setNotice(callback.message);
+            if (!cancel) setViewer(await remote.getViewer());
+            if (!cancel) {
+              stop = remote.onAuth((next) => {
+                if (!cancel) setViewer(next);
+              });
+            }
+          } catch (error) {
+            if (!cancel) {
+              setViewer(null);
+              setNotice(message(error));
+            }
+          }
+        } else {
+          const raw = sessionStorage.getItem(VIEWER_KEY);
+          if (raw) {
+            try {
+              const stored = JSON.parse(raw) as Viewer;
+              local.setViewer(stored);
+              if (!cancel) setViewer(stored);
+            } catch {
+              sessionStorage.removeItem(VIEWER_KEY);
+              if (!cancel) setViewer(null);
+            }
+          } else if (!cancel) {
+            local.clearViewer();
+            setViewer(null);
           }
         }
+      } finally {
+        if (!cancel) setReady(true);
       }
-      setReady(true);
     };
     void boot();
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
       void navigator.serviceWorker.register("/sw.js");
     }
-    return () => stop();
-  }, [local, remote]);
+    return () => {
+      cancel = true;
+      stop();
+    };
+  }, [bootId, local, remote]);
 
   useEffect(() => {
     if (!ready) return;
@@ -120,6 +150,7 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
   const api = useMemo<Codex>(() => {
     return {
       mode,
+      supabaseConfigured: Boolean(remote),
       ready,
       viewer,
       tables,
@@ -137,7 +168,12 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
       async signInEmail(email: string) {
         if (!remote) throw new RuleError("This demo has no mail yet. Pick a seat instead.");
         await remote.signInEmail(email);
-        setNotice("Check your email for the sign-in link. It expires if you wait too long.");
+      },
+      async signInWithCode(email: string, code: string) {
+        if (!remote) throw new RuleError("This demo has no mail yet. Pick a seat instead.");
+        await remote.signInWithCode(email, code);
+        const next = await remote.getViewer();
+        setViewer(next);
       },
       async signInGoogle() {
         if (!remote) throw new RuleError("Google sign-in waits until Supabase is connected.");
@@ -206,8 +242,18 @@ export function CodexProvider({ children }: { children: React.ReactNode }) {
         return code;
       },
       useLocalDemo() {
-        sessionStorage.setItem("st6-force-local", "1");
+        sessionStorage.setItem(DEMO_KEY, "1");
         setForceLocal(true);
+        setViewer(null);
+        setBootId((value) => value + 1);
+      },
+      exitLocalDemo() {
+        sessionStorage.removeItem(DEMO_KEY);
+        sessionStorage.removeItem(VIEWER_KEY);
+        local.clearViewer();
+        setForceLocal(false);
+        setViewer(null);
+        setBootId((value) => value + 1);
       },
     };
   }, [local, mode, notice, ready, refreshTables, remote, signInLocal, tables, viewer]);

@@ -90,7 +90,7 @@ Only the **anon** key goes in the app. Do not paste the service role key anywher
 
 ### 2. Turn on sign-in
 
-1. **Authentication → Providers → Email**. Leave it enabled. No passwords; the app sends a magic link.
+1. **Authentication → Providers → Email**. Leave it enabled. No passwords; the app sends a magic link. Leave the email template on the default `{{ .ConfirmationURL }}`. The link signs you in even when Mail on an iPhone opens it in its own browser. If you later add `{{ .Token }}` to that template, the 6-digit box on the sign-in screen accepts it. You do not have to.
 2. **Authentication → URL configuration**.
    - Site URL: `http://localhost:3000` while you are trying it on your machine. Change this to `https://YOUR-APP.vercel.app` after Vercel gives you a domain.
    - Add these redirect URLs:
@@ -143,7 +143,7 @@ NEXT_PUBLIC_SITE_URL=https://YOUR-APP.vercel.app
 
 Use the real Vercel domain. If you do not know it yet, deploy once, copy the domain, set `NEXT_PUBLIC_SITE_URL`, and redeploy. Changing these requires a new deploy, not just a refresh.
 
-5. After the deploy is green, set Supabase **Site URL** to `https://YOUR-APP.vercel.app` and make sure `https://YOUR-APP.vercel.app/auth/callback` is in the redirect allow list.
+5. After the deploy is green, set Supabase **Site URL** to `https://YOUR-APP.vercel.app` and make sure `https://YOUR-APP.vercel.app/auth/callback` is in the redirect allow list. If those three variables are already set under those exact names, leave them. The names do not change, and the magic-link email template stays on the default `{{ .ConfirmationURL }}`.
 6. Open the Vercel URL on a phone. The browser can install it (Add to Home Screen, or the install prompt). Sign in, create the table, share the code.
 
 ## Install on a phone
@@ -161,4 +161,4 @@ These cannot be done from the repo. Everything else is already in the app.
 5. Optional: create a Google OAuth client and paste its id and secret into Supabase's Google provider. The redirect there is `https://YOUR-PROJECT-REF.supabase.co/auth/v1/callback`.
 6. Create a Vercel account, import the repo, set the three environment variables, and deploy.
 
-You do not create passwords, tables, or character rows by hand. The first signed-in player creates a table and seats the ten.
+You do not create passwords, tables, or character rows by hand. You do not edit the magic-link email. The first signed-in player creates a table and seats the ten.

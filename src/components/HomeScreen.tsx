@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DEMO_PLAYERS } from "@/lib/ids";
 import { useCodex } from "./CodexProvider";
+import { MagicLinkForm } from "./MagicLinkForm";
 import { Button, Card, Kicker, TextField } from "./ui";
 
 export function HomeScreen() {
@@ -13,7 +14,6 @@ export function HomeScreen() {
   const params = useSearchParams();
   const next = params.get("next");
   const [guest, setGuest] = useState("");
-  const [email, setEmail] = useState("");
   const [tableName, setTableName] = useState("Thursday table");
   const [joinCode, setJoinCode] = useState("");
   const [seed, setSeed] = useState(true);
@@ -51,9 +51,15 @@ export function HomeScreen() {
         <Card>
           <Kicker>This phone</Kicker>
           <p className="mt-2 text-sm text-mute">
-            Local demo. No account. Open the same table in another tab and pick someone else — that second seat updates live.
-            Across real phones, connect Supabase. The steps are in the README.
+            {codex.supabaseConfigured
+              ? "Practice table on this phone. The other phones are on the signed-in table."
+              : "Local demo. No account. Open the same table in another tab and pick someone else — that second seat updates live. Across real phones, connect Supabase. The steps are in the README."}
           </p>
+          {codex.supabaseConfigured ? (
+            <Button className="mt-4 w-full" tone="ghost" onClick={() => codex.exitLocalDemo()}>
+              Sign in with email instead
+            </Button>
+          ) : null}
           <div className="mt-4 grid gap-2">
             {DEMO_PLAYERS.map((player) => (
               <Button
@@ -87,43 +93,24 @@ export function HomeScreen() {
       ) : (
         <Card>
           <Kicker>Sign in</Kicker>
-          <p className="mt-2 text-sm text-mute">A magic link, or Google. No password.</p>
+          <p className="mt-2 text-sm text-mute">
+            A magic link, or Google. No password. The link signs you in even if Mail opens it in its own browser. After that, open a table and send the code.
+          </p>
           {codex.viewer ? (
             <p className="mt-3">
               Signed in as <span className="text-brass">{codex.viewer.displayName}</span>
             </p>
           ) : (
-            <form
-              className="mt-4 grid gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void run(async () => {
-                  await codex.signInEmail(email);
-                });
-              }}
-            >
-              <TextField
-                type="email"
-                required
-                placeholder="you@example.com"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                aria-label="Email"
-              />
-              <Button type="submit" disabled={busy}>
-                Email me a link
-              </Button>
-              <Button type="button" tone="ghost" disabled={busy} onClick={() => void run(() => codex.signInGoogle())}>
-                Continue with Google
-              </Button>
-            </form>
+            <div className="mt-4">
+              <MagicLinkForm showGoogle />
+            </div>
           )}
           <button
             className="mt-4 text-left text-sm text-mute underline decoration-line underline-offset-4"
             type="button"
             onClick={() => codex.useLocalDemo()}
           >
-            Use the local demo on this device instead
+            Practice on this phone instead
           </button>
         </Card>
       )}
