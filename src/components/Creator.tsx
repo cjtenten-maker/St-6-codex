@@ -3,11 +3,15 @@
 import { useState } from "react";
 import { ARMORS, SHIELDS, SPELLS, WEAPONS } from "@/lib/data/catalog";
 import type { Character, StatName, Tag } from "@/lib/model";
-import { HERO_START, manaMaximum, rollHitPoints, rollStatPool, stackedAc, tagCountAllowed, type HitPointRoll, type StatPool } from "@/lib/rules";
-import { Button, Card, Kicker, TextField } from "./ui";
+import { HERO_START, manaMaximum, parsePositiveInteger, rollHitPoints, rollStatPool, stackedAc, tagCountAllowed, type HitPointRoll, type StatPool } from "@/lib/rules";
+import { Button, Card, Kicker, TextField, cx } from "./ui";
 
 const STATS: StatName[] = ["charisma", "strength", "combat", "arcana"];
 const STAT_LABEL: Record<StatName, string> = { charisma: "Charisma", strength: "Strength", combat: "Combat", arcana: "Arcana" };
+const EMPTY_SLOTS: Record<StatName, number | null> = { charisma: null, strength: null, combat: null, arcana: null };
+const EMPTY_MANUAL: Record<StatName, string> = { charisma: "", strength: "", combat: "", arcana: "" };
+
+type EntryMode = "roll" | "manual";
 
 export function Creator({
   onClose,
@@ -18,14 +22,13 @@ export function Creator({
 }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [statMode, setStatMode] = useState<EntryMode>("roll");
+  const [hpMode, setHpMode] = useState<EntryMode>("roll");
   const [pool, setPool] = useState<StatPool | null>(null);
-  const [slots, setSlots] = useState<Record<StatName, number | null>>({
-    charisma: null,
-    strength: null,
-    combat: null,
-    arcana: null,
-  });
+  const [slots, setSlots] = useState<Record<StatName, number | null>>(EMPTY_SLOTS);
+  const [manualStats, setManualStats] = useState<Record<StatName, string>>(EMPTY_MANUAL);
   const [hpRoll, setHpRoll] = useState<HitPointRoll | null>(null);
+  const [manualHp, setManualHp] = useState("");
   const [armorId, setArmorId] = useState("clothes");
   const [shieldId, setShieldId] = useState("none");
   const [customAc, setCustomAc] = useState("");
@@ -58,12 +61,16 @@ export function Creator({
   const save = async () => {
     const cleanTags = tags.map((tag) => tag.trim()).filter(Boolean);
     if (!name.trim()) return setError("The hero needs a name.");
-    if (!pool || STATS.some((stat) => assigned[stat] == null)) return setError("Roll the sets, then assign all four.");
-    if (!hpRoll) return setError("Roll hit points.");
+    const stats = statMode === "roll" ? rolledStats() : typedStats();
+    if (!stats) return;
+    const hp = hpMode === "roll" ? hpRoll?.total : parsePositiveInteger(manualHp);
+    if (hp == null) {
+      return setError(hpMode === "roll" ? "Roll hit points." : "Enter hit points as a whole number, 1 or more.");
+    }
     if (!tagCountAllowed(cleanTags.length, true)) return setError("A new hero carries 3 to 5 tags.");
     if (!Number.isFinite(ac)) return setError("AC has to be a number. Handwritten scores under 10 are allowed.");
-    const strength = (assigned.strength ?? 0) + (armor.strengthBonus ?? 0);
-    const arcana = assigned.arcana ?? 0;
+    const strength = stats.strength + (armor.strengthBonus ?? 0);
+    const arcana = stats.arcana;
     const tagList: Tag[] = cleanTags.map((label) => ({
       id: crypto.randomUUID(),
       label,
@@ -80,12 +87,12 @@ export function Creator({
       notes: armor.strengthBonus ? "+1 Strength from powered armor is included." : "",
       abilities: "",
       inventory: "",
-      charisma: assigned.charisma ?? 0,
+      charisma: stats.charisma,
       strength,
-      combat: assigned.combat ?? 0,
+      combat: stats.combat,
       arcana,
-      hp: hpRoll.total,
-      hpMax: hpRoll.total,
+      hp,
+      hpMax: hp,
       mana: manaMaximum(arcana),
       ac,
       acNote: customAc.trim() === "" ? `${armor.name}${shield.bonus ? ` + ${shield.name}` : ""}` : "Handwritten.",
@@ -127,6 +134,33 @@ export function Creator({
     }
   };
 
+  const rolledStats = (): Record<StatName, number> | null => {
+    if (!pool || STATS.some((stat) => assigned[stat] == null)) {
+      setError("Roll the sets, then assign all four.");
+      return null;
+    }
+    return {
+      charisma: assigned.charisma ?? 0,
+      strength: assigned.strength ?? 0,
+      combat: assigned.combat ?? 0,
+      arcana: assigned.arcana ?? 0,
+    };
+  };
+
+  const typedStats = (): Record<StatName, number> | null => {
+    const parsed = {
+      charisma: parsePositiveInteger(manualStats.charisma),
+      strength: parsePositiveInteger(manualStats.strength),
+      combat: parsePositiveInteger(manualStats.combat),
+      arcana: parsePositiveInteger(manualStats.arcana),
+    };
+    if (STATS.some((stat) => parsed[stat] == null)) {
+      setError("Enter a whole number, 1 or more, for each stat.");
+      return null;
+    }
+    return parsed as Record<StatName, number>;
+  };
+
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-ink/95 px-4 py-6">
       <div className="mx-auto grid max-w-lg gap-4 pb-16">
@@ -144,55 +178,83 @@ export function Creator({
           </div>
         </Card>
         <Card>
-          <Kicker>Stats · 5×3d4, drop the lowest total</Kicker>
-          <Button className="mt-3" tone="ghost" onClick={() => { setPool(rollStatPool()); setSlots({ charisma: null, strength: null, combat: null, arcana: null }); }}>
-            Roll five sets
-          </Button>
-          {pool ? (
-            <p className="mt-3 text-sm">
-              {pool.sets.map((set, index) => (
-                <span key={index} className={index === pool.droppedIndex ? "mx-1 text-mute line-through" : "mx-1 text-brass"}>
-                  {set}
-                </span>
-              ))}
-            </p>
-          ) : null}
-          <div className="mt-3 grid gap-3">
-            {STATS.map((stat) => (
-              <div key={stat}>
-                <p className="text-sm">{STAT_LABEL[stat]} {assigned[stat] != null ? <span className="num text-brass">{assigned[stat]}</span> : null}</p>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {pool?.kept.map((value, index) => (
-                    <button
-                      key={`${value}-${index}`}
-                      type="button"
-                      disabled={used.has(index) && slots[stat] !== index}
-                      className="min-h-11 min-w-11 rounded-xl border border-line px-3 disabled:opacity-30"
-                      onClick={() => take(stat, index)}
-                    >
-                      {value}
-                    </button>
+          <Kicker>{statMode === "roll" ? "Stats · 5×3d4, drop the lowest total" : "Stats · from the paper sheet"}</Kicker>
+          <ModeToggle label="How to set stats" value={statMode} onChange={setStatMode} />
+          {statMode === "roll" ? (
+            <>
+              <Button className="mt-3" tone="ghost" onClick={() => { setPool(rollStatPool()); setSlots(EMPTY_SLOTS); }}>
+                Roll five sets
+              </Button>
+              {pool ? (
+                <p className="mt-3 text-sm">
+                  {pool.sets.map((set, index) => (
+                    <span key={index} className={index === pool.droppedIndex ? "mx-1 text-mute line-through" : "mx-1 text-brass"}>
+                      {set}
+                    </span>
                   ))}
-                </div>
+                </p>
+              ) : null}
+              <div className="mt-3 grid gap-3">
+                {STATS.map((stat) => (
+                  <div key={stat}>
+                    <p className="text-sm">{STAT_LABEL[stat]} {assigned[stat] != null ? <span className="num text-brass">{assigned[stat]}</span> : null}</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {pool?.kept.map((value, index) => (
+                        <button
+                          key={`${value}-${index}`}
+                          type="button"
+                          disabled={used.has(index) && slots[stat] !== index}
+                          className="min-h-11 min-w-11 rounded-xl border border-line px-3 disabled:opacity-30"
+                          onClick={() => take(stat, index)}
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-3 text-sm text-mute">Copy the numbers from paper. Any whole number from 1 up is allowed.</p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                {STATS.map((stat) => (
+                  <NumberEntry
+                    key={stat}
+                    label={STAT_LABEL[stat]}
+                    value={manualStats[stat]}
+                    onChange={(value) => setManualStats({ ...manualStats, [stat]: value })}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </Card>
         <Card>
-          <Kicker>Hit points · 5d10, drop the lowest</Kicker>
-          <Button className="mt-3" tone="ghost" onClick={() => setHpRoll(rollHitPoints())}>
-            Roll hit points
-          </Button>
-          {hpRoll ? (
-            <p className="mt-3">
-              {hpRoll.rolls.map((face, index) => (
-                <span key={index} className={index === hpRoll.droppedIndex ? "mx-1 text-mute line-through" : "mx-1"}>
-                  {face}
-                </span>
-              ))}
-              <span className="num text-brass"> = {hpRoll.total}</span>
-            </p>
-          ) : null}
+          <Kicker>{hpMode === "roll" ? "Hit points · 5d10, drop the lowest" : "Hit points · from the paper sheet"}</Kicker>
+          <ModeToggle label="How to set hit points" value={hpMode} onChange={setHpMode} />
+          {hpMode === "roll" ? (
+            <>
+              <Button className="mt-3" tone="ghost" onClick={() => setHpRoll(rollHitPoints())}>
+                Roll hit points
+              </Button>
+              {hpRoll ? (
+                <p className="mt-3">
+                  {hpRoll.rolls.map((face, index) => (
+                    <span key={index} className={index === hpRoll.droppedIndex ? "mx-1 text-mute line-through" : "mx-1"}>
+                      {face}
+                    </span>
+                  ))}
+                  <span className="num text-brass"> = {hpRoll.total}</span>
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <div className="mt-3">
+              <NumberEntry label="Hit points" value={manualHp} onChange={setManualHp} />
+            </div>
+          )}
         </Card>
         <Card>
           <Kicker>Armor · shield stacks stop at 20</Kicker>
@@ -256,4 +318,56 @@ export function Creator({
 
 function toggle(list: string[], id: string): string[] {
   return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
+}
+
+function ModeToggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: EntryMode;
+  onChange: (mode: EntryMode) => void;
+}) {
+  const options: { mode: EntryMode; text: string }[] = [
+    { mode: "roll", text: "Roll" },
+    { mode: "manual", text: "Enter manually" },
+  ];
+  return (
+    <div role="group" aria-label={label} className="mt-3 grid grid-cols-2 gap-2">
+      {options.map((option) => (
+        <button
+          key={option.mode}
+          type="button"
+          aria-pressed={value === option.mode}
+          className={cx(
+            "min-h-11 rounded-xl border px-2 text-center text-sm font-medium leading-tight",
+            value === option.mode ? "border-brass bg-brass text-ink" : "border-line bg-ink text-paper",
+          )}
+          onClick={() => onChange(option.mode)}
+        >
+          {option.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function NumberEntry({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const invalid = value.trim() !== "" && parsePositiveInteger(value) == null;
+  return (
+    <label className="grid gap-1 text-sm">
+      <span>{label}</span>
+      <TextField inputMode="numeric" aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} />
+      {invalid ? <span className="text-xs text-hp">Use a whole number, 1 or more.</span> : null}
+    </label>
+  );
 }
