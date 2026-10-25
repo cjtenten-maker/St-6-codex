@@ -7,6 +7,7 @@ import {
   resolveAttack,
   resolveCast,
   resolveCheck,
+  parsePositiveInteger,
   rollHitPoints,
   rollStatPool,
   shortRest,
@@ -382,5 +383,19 @@ describe("rests, hero points, creation", () => {
     expect(stackedAc(18, 3)).toBe(20);
     expect(stackedAc(10, 0)).toBe(10);
     expect(stackedAc(14, 2)).toBe(16);
+  });
+
+  it("accepts any positive whole number and refuses anything else", () => {
+    expect(parsePositiveInteger("1")).toBe(1);
+    expect(parsePositiveInteger(" 18 ")).toBe(18);
+    expect(parsePositiveInteger("99")).toBe(99);
+    expect(parsePositiveInteger("2")).toBe(2);
+    expect(parsePositiveInteger("400")).toBe(400);
+    expect(parsePositiveInteger("")).toBeNull();
+    expect(parsePositiveInteger("0")).toBeNull();
+    expect(parsePositiveInteger("-3")).toBeNull();
+    expect(parsePositiveInteger("1.5")).toBeNull();
+    expect(parsePositiveInteger("12d")).toBeNull();
+    expect(parsePositiveInteger("01")).toBeNull();
   });
 });

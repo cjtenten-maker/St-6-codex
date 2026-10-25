@@ -6,5 +6,5 @@ export { manaMaximum, spendMana, resolveCast, resolveCheck } from "./cast";
 export type { CastInput, CastResult, CheckResult } from "./cast";
 export { HERO_START, HERO_CAP, awardHeroPoint, spendHeroPoint, shortRest, longRest } from "./rest";
 export type { RestSnapshot, RestResult } from "./rest";
-export { rollStatPool, rollHitPoints, tagCountAllowed, stackedAc } from "./creation";
+export { rollStatPool, rollHitPoints, tagCountAllowed, stackedAc, parsePositiveInteger } from "./creation";
 export type { StatPool, HitPointRoll } from "./creation";
