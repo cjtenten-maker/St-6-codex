@@ -29,8 +29,9 @@ export function portraitObjectName(tableId: string, characterId: string, rev = D
 const ART_FILE = /^[0-9]{1,16}\.jpg$/i;
 
 /**
- * Object names to remove when a character leaves.
- * Only files already stored under that character. A data URL stays in the demo.
+ * Object names to remove when a character or a trouble leaves.
+ * Only files already stored under that id. A data URL stays in the demo.
+ * Both buckets use {tableId}/{id}/{revision}.jpg.
  */
 export function characterArtObjectNames(
   tableId: string,

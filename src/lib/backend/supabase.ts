@@ -125,13 +125,15 @@ export function isMissingClaimRpc(error: { code?: string; message?: string } | n
   return /could not find the function/i.test(error.message ?? "") && /claim_character/i.test(error.message ?? "");
 }
 
-/** The character-art trigger deletes storage.objects, which Supabase rejects. */
+/** A row trigger that deletes storage.objects. Supabase rejects that with protect_delete. */
 export function isStorageTriggerBlock(error: { message?: string } | null): boolean {
-  return /protect_delete|storage\.objects|delete_character_art/i.test(error?.message ?? "");
+  return /protect_delete|storage\.objects|delete_character_art|delete_trouble_art/i.test(error?.message ?? "");
 }
 
 const CLAIM_MIGRATION = "Claiming needs supabase/migrations/004_claim_and_character_art.sql.";
 const DELETE_MIGRATION = "Deleting a character needs supabase/migrations/004_claim_and_character_art.sql. The character is still at the table.";
+const TROUBLE_DELETE_MIGRATION =
+  "Deleting a trouble needs supabase/migrations/005_trouble_art_storage.sql. The trouble is still in the library.";
 const DUPLICATE_NAME = "That name is already at this table. Claim that sheet instead of adding another.";
 
 function characterFromRow(row: CharacterRow): Character {
@@ -375,9 +377,7 @@ async function diffLibrary(prev: TableState, next: TableState): Promise<void> {
     seenTrouble.delete(item.id);
   }
   for (const leftover of seenTrouble.values()) {
-    const { error } = await supabase.from("trouble").delete().eq("id", leftover.id);
-    if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
-    fail(error);
+    await deleteTroubleRow(tableId, leftover);
   }
   for (const leftover of seenFolders.values()) {
     const { error } = await supabase.from("trouble_folders").delete().eq("id", leftover.id);
@@ -397,6 +397,31 @@ async function listCharacterArt(tableId: string, character: Character): Promise<
   const listed = await getSupabase().storage.from("character-art").list(folder, { limit: 100 });
   const files = listed.error ? [] : (listed.data ?? []).map((file) => file.name);
   return characterArtObjectNames(tableId, character.id, character.portraitPath, files);
+}
+
+async function listTroubleArt(tableId: string, trouble: Trouble): Promise<string[]> {
+  const folder = `${tableId}/${trouble.id}`;
+  const listed = await getSupabase().storage.from("trouble-art").list(folder, { limit: 100 });
+  const files = listed.error ? [] : (listed.data ?? []).map((file) => file.name);
+  return characterArtObjectNames(tableId, trouble.id, trouble.portraitPath, files);
+}
+
+/**
+ * List while the trouble row still exists (the read policy requires it).
+ * Delete the row before the files. A database that still has trouble_delete_art
+ * rejects that delete, the pictures stay, and the screen names migration 005.
+ * After the row is gone, the current GM may remove the leftovers.
+ */
+async function deleteTroubleRow(tableId: string, trouble: Trouble): Promise<void> {
+  const art = await listTroubleArt(tableId, trouble);
+  const { data, error } = await getSupabase().from("trouble").delete().eq("id", trouble.id).select("id");
+  if (isMissingRelation(error)) throw new RuleError(LIBRARY_WAITING);
+  if (isStorageTriggerBlock(error)) throw new RuleError(TROUBLE_DELETE_MIGRATION);
+  fail(error);
+  if (!data?.length) throw new RuleError("That trouble is still in the library.");
+  if (art.length === 0) return;
+  const { error: storageError } = await getSupabase().storage.from("trouble-art").remove(art);
+  fail(storageError);
 }
 
 async function deleteCharacterRow(tableId: string, character: Character): Promise<void> {

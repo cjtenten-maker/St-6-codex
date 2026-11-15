@@ -35,4 +35,12 @@ describe("character portraits", () => {
     ]);
     expect(characterArtObjectNames(ID.table, ID.naibroch, "data:image/jpeg;base64,abc", [])).toEqual([]);
   });
+
+  it("collects a trouble's art files under the same layout", () => {
+    const current = portraitObjectName(ID.table, ID.wolf, 1_700_000_000_000);
+    expect(characterArtObjectNames(ID.table, ID.wolf, current, ["1700000000001.jpg", "notes.txt"])).toEqual([
+      `${ID.table}/${ID.wolf}/1700000000000.jpg`,
+      `${ID.table}/${ID.wolf}/1700000000001.jpg`,
+    ]);
+  });
 });
