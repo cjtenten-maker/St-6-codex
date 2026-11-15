@@ -12,4 +12,12 @@ describe("claim and portrait delete errors", () => {
     expect(isStorageTriggerBlock({ message: "Direct deletion from storage tables is not allowed. Use the Storage API. protect_delete" })).toBe(true);
     expect(isStorageTriggerBlock({ message: "permission denied for table characters" })).toBe(false);
   });
+
+  it("notices the storage.objects trigger that blocks a trouble delete", () => {
+    const message =
+      "ERROR 42501: Direct deletion from storage tables is not allowed. Use the Storage API instead. " +
+      "PL/pgSQL function protect_delete() SQL statement \"delete from storage.objects where bucket_id = 'trouble-art'\" " +
+      "PL/pgSQL function delete_trouble_art()";
+    expect(isStorageTriggerBlock({ message })).toBe(true);
+  });
 });
