@@ -1,8 +1,11 @@
-import type { Action, Character, CharacterPatch, LogEntry, LogKind, Member, TableState, Trouble, TroubleFolder } from "../model";
+import type { Action, Character, CharacterPatch, KineticTank, LogEntry, LogKind, Member, TableState, Trouble, TroubleFolder } from "../model";
 import { COMPANY_CAP, FOLDER_CAP, GM_CAP, SEAT_CAP, TROUBLE_CAP } from "../model";
 import { RuleError } from "../rules/errors";
 import { manaMaximum, spendMana } from "../rules/cast";
+import { creditsLog, normalizeCredits } from "../rules/credits";
 import { HERO_CAP, HERO_START, awardHeroPoint, longRest, shortRest, spendHeroPoint } from "../rules/rest";
+import { hpAfterSuit, suitHpMax } from "../rules/suit";
+import { TANK_ON_BRACE, TANK_ON_DAMAGE, bankTank, normalizeTank, tankAfterLongRest, tankCap, tankChanged, tankLog } from "../rules/tank";
 import { enterLine, foeFromTrouble, instanceNames, libraryOf } from "./library";
 import { normalizePortraitFit, normalizePortraitFocus } from "../portrait";
 import { isClaimed, isOwnCharacter } from "./present";
@@ -22,7 +25,7 @@ export function applyAction(state: TableState, action: Action, ctx: ActionContex
     case "release":
       return release(state, actor, action.characterId, ctx);
     case "patchCharacter":
-      return patchCharacter(state, actor, action.characterId, action.patch);
+      return patchCharacter(state, actor, action.characterId, action.patch, ctx);
     case "setPortrait":
       return setPortrait(state, actor, action.characterId, action.portraitPath);
     case "setEligible":
@@ -73,6 +76,8 @@ export function applyAction(state: TableState, action: Action, ctx: ActionContex
       return moveTurn(state, actor, action.characterId, action.direction);
     case "applyHarm":
       return applyHarm(state, actor, action, ctx);
+    case "setHitPoints":
+      return setHitPoints(state, actor, action, ctx);
     case "spendMana":
       return spendManaAction(state, actor, action.characterId, action.amount);
     case "grantCover":
@@ -133,12 +138,31 @@ function setPortrait(state: TableState, actor: Member, characterId: string, port
   return mapCharacter(state, characterId, (current) => clearPortraitFrame({ ...current, portraitPath }));
 }
 
-function patchCharacter(state: TableState, actor: Member, characterId: string, patch: CharacterPatch): TableState {
+function patchCharacter(
+  state: TableState,
+  actor: Member,
+  characterId: string,
+  patch: CharacterPatch,
+  ctx: ActionContext,
+): TableState {
   const character = requireCharacter(state, characterId);
   assertCanEdit(state, actor, character);
-  const next = normalizeCharacter({ ...character, ...patch, id: character.id });
+  const clean = withoutUndefined(patch);
+  const { kineticTank, ...rest } = clean;
+  const merged: Character = { ...character, ...rest, id: character.id };
+  if (kineticTank) merged.kineticTank = kineticTank;
+  else if (kineticTank === null) delete merged.kineticTank;
+  if (clean.suit) merged.hp = hpAfterSuit(merged.hp, character.suit, clean.suit);
+  const next = normalizeCharacter(merged);
   assertUniqueName(state, next);
-  return mapCharacter(state, characterId, () => next);
+  let updated = mapCharacter(state, characterId, () => next);
+  if (clean.credits != null && next.credits !== (character.credits ?? 0)) {
+    updated = withLog(updated, ctx, "credits", creditsLog(character.name, character.credits ?? 0, next.credits ?? 0));
+  }
+  if (Object.prototype.hasOwnProperty.call(clean, "kineticTank") && tankChanged(character.kineticTank, next.kineticTank)) {
+    updated = withLog(updated, ctx, "note", tankLog(character.name, character.kineticTank, next.kineticTank));
+  }
+  return updated;
 }
 
 function setEligible(state: TableState, actor: Member, memberIds: string[]): TableState {
@@ -240,7 +264,7 @@ function rest(state: TableState, actor: Member, kind: "short" | "long", ctx: Act
       kind === "short"
         ? shortRest(character, manaMax)
         : longRest(character, manaMax);
-    return {
+    const rested: Character = {
       ...character,
       hp: clamp(result.hp, 0, character.hpMax),
       mana: result.mana,
@@ -248,11 +272,19 @@ function rest(state: TableState, actor: Member, kind: "short" | "long", ctx: Act
       defenseTagActive: result.defenseTagActive,
       weapons: character.weapons.map((weapon) => ({ ...weapon, overheated: false })),
     };
+    if (kind === "long" && character.kineticTank) {
+      const emptied = tankAfterLongRest(character.kineticTank);
+      if (emptied) rested.kineticTank = emptied;
+    }
+    return rested;
   });
+  const tankEmptied = kind === "long" && state.characters.some((character) => character.seated && character.kineticTank);
   const summary =
     kind === "short"
       ? "Short rest. Seated heroes regain mana equal to Arcana. No hit points."
-      : "Long rest. Seated heroes are whole: hit points and mana full.";
+      : tankEmptied
+        ? "Long rest. Seated heroes are whole: hit points and mana full. Kinetic tanks empty."
+        : "Long rest. Seated heroes are whole: hit points and mana full.";
   return withLog({ ...state, characters }, ctx, "rest", summary);
 }
 
@@ -499,21 +531,91 @@ function applyHarm(
   if (action.onlySeated && !character.seated) {
     throw new RuleError("Trouble only reaches heroes who are seated.");
   }
-  assertCanEdit(state, actor, character);
+  if (character.concealed) throw new RuleError(`${character.name}'s sheet is private.`);
+  // Any member can land a blow. Notes, gear, and the rest of the sheet stay closed.
   const hp =
     action.direction === "heal"
       ? Math.min(character.hpMax, character.hp + amount)
       : Math.max(0, character.hp - amount);
+  const banked = action.direction === "harm" ? bankFromDamage(character, amount) : null;
   return withLog(
-    mapCharacter(state, character.id, (current) => ({
-      ...current,
-      hp,
-      energyShield: action.breakShield ? false : current.energyShield,
-    })),
+    mapCharacter(state, character.id, (current) => {
+      const next: Character = {
+        ...current,
+        hp,
+        energyShield: action.breakShield ? false : current.energyShield,
+      };
+      if (banked) next.kineticTank = banked.tank;
+      return next;
+    }),
     ctx,
     "damage",
-    action.summary,
+    banked ? `${action.summary} ${banked.note}` : action.summary,
   );
+}
+
+/**
+ * The GM's party controls set a number.
+ * Real strikes still go through applyHarm and bank on their own.
+ * Here the tank fills only when the GM says the loss counts as damage taken,
+ * and only for the hit points that actually came off. A higher number is healing.
+ */
+function setHitPoints(
+  state: TableState,
+  actor: Member,
+  action: Extract<Action, { type: "setHitPoints" }>,
+  ctx: ActionContext,
+): TableState {
+  assertGm(state, actor);
+  const character = requireCharacter(state, action.characterId);
+  assertCanEdit(state, actor, character);
+  const requested = Number.isFinite(action.hp) ? Math.floor(action.hp) : character.hp;
+  const hp = clamp(requested, 0, character.hpMax);
+  if (hp === character.hp) return state;
+  const lost = character.hp - hp;
+  const counts = Boolean(action.countsAsDamage) && lost > 0;
+  const banked = counts ? bankFromDamage(character, lost) : null;
+  const summary = hitPointSummary(character, hp, counts, banked?.note);
+  return withLog(
+    mapCharacter(state, character.id, (current) => {
+      const next: Character = { ...current, hp };
+      if (banked) next.kineticTank = banked.tank;
+      return next;
+    }),
+    ctx,
+    "damage",
+    summary,
+  );
+}
+
+function hitPointSummary(character: Character, hp: number, counts: boolean, tankNote: string | undefined): string {
+  const lost = character.hp - hp;
+  if (lost > 0 && counts) {
+    return tankNote ? `${character.name} takes ${lost}. HP ${hp}. ${tankNote}` : `${character.name} takes ${lost}. HP ${hp}.`;
+  }
+  if (lost > 0) {
+    const tank = character.kineticTank ? " The tank is unchanged." : "";
+    return `${character.name}'s HP set to ${hp} (was ${character.hp}). Correction.${tank}`;
+  }
+  return `${character.name} recovers ${hp - character.hp}. HP ${hp}.`;
+}
+
+/**
+ * Damage banks 2 tank per point, or 3 when Brace is armed.
+ * Brace is the reaction to this hit, so it clears. Healing does not bank.
+ * A sheet with no tank is left alone.
+ */
+function bankFromDamage(character: Character, amount: number): { tank: KineticTank; note: string } | null {
+  const tank = character.kineticTank;
+  if (!tank || amount <= 0) return null;
+  const braced = Boolean(tank.brace);
+  const before = tank.points;
+  const points = bankTank(before, amount, tankCap(character.combat), braced ? TANK_ON_BRACE : TANK_ON_DAMAGE);
+  if (points === before && !braced) return null;
+  const next: KineticTank = { points };
+  if (tank.overload != null && tank.overload > 0) next.overload = tank.overload;
+  const braceNote = braced ? ", Brace" : "";
+  return { tank: next, note: `Tank ${before} → ${points}${braceNote}.` };
 }
 
 function grantCover(state: TableState, actor: Member, characterIds: string[], tempAc: number, ctx: ActionContext): TableState {
@@ -595,38 +697,49 @@ function advance(state: TableState, actor: Member, characterId: string, text: st
 }
 
 function normalizeCharacter(character: Character): Character {
-  const hpMax = Math.max(1, Math.floor(character.hpMax));
+  let hpMax = Math.max(1, Math.floor(character.hpMax));
   const arcana = Math.floor(character.arcana);
   const manaMax = manaMaximum(arcana);
+  const combat = Math.floor(character.combat);
   let charisma = Math.floor(character.charisma);
   let ac = Math.floor(character.ac);
   let suit = character.suit;
   if (suit) {
-    charisma = suit.on ? suit.onCha : suit.offCha;
-    ac = suit.on ? suit.onAc : suit.offAc;
+    const onHpMax = suit.onHpMax == null ? undefined : Math.max(1, Math.floor(suit.onHpMax));
+    const offHpMax = suit.offHpMax == null ? undefined : Math.max(1, Math.floor(suit.offHpMax));
     suit = {
-      on: suit.on,
+      on: Boolean(suit.on),
+      ...(suit.name?.trim() ? { name: suit.name.trim() } : {}),
       onCha: Math.floor(suit.onCha),
       offCha: Math.floor(suit.offCha),
       onAc: Math.floor(suit.onAc),
       offAc: Math.floor(suit.offAc),
+      ...(onHpMax != null && offHpMax != null ? { onHpMax, offHpMax } : {}),
     };
+    charisma = suit.on ? suit.onCha : suit.offCha;
+    ac = suit.on ? suit.onAc : suit.offAc;
+    const fromSuit = suitHpMax(suit);
+    if (fromSuit != null) hpMax = fromSuit;
   }
+  const tank = normalizeTank(combat, character.kineticTank);
   const next: Character = {
     ...character,
     charisma,
     strength: Math.floor(character.strength),
-    combat: Math.floor(character.combat),
+    combat,
     arcana,
     hpMax,
     hp: clamp(Math.floor(character.hp), 0, hpMax),
     mana: clamp(Math.floor(character.mana), 0, manaMax),
+    credits: normalizeCredits(character.credits),
     ac,
     tempAc: Math.max(0, Math.floor(character.tempAc)),
     heroPoints: clamp(Math.floor(character.heroPoints), 0, HERO_CAP),
     suit,
     tags: character.tags.slice(0, 5),
   };
+  if (tank) next.kineticTank = tank;
+  else delete next.kineticTank;
   const portraitFit = normalizePortraitFit(character.portraitFit);
   const portraitFocus = normalizePortraitFocus(character.portraitFocus);
   if (portraitFit) next.portraitFit = portraitFit;
@@ -706,4 +819,13 @@ function takeId(ctx: ActionContext): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/** A missing key leaves the sheet alone. Undefined must not wipe a value the way null clears the tank. */
+function withoutUndefined(patch: CharacterPatch): CharacterPatch {
+  const next: CharacterPatch = {};
+  for (const key of Object.keys(patch) as (keyof CharacterPatch)[]) {
+    if (patch[key] !== undefined) next[key] = patch[key] as never;
+  }
+  return next;
 }

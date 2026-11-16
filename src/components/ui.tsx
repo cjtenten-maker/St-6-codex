@@ -66,9 +66,10 @@ export function Meter({
   label: string;
   value: number;
   max: number;
-  tone: "hp" | "mana";
+  tone: "hp" | "mana" | "tank";
 }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  const bar = tone === "hp" ? "bg-hp" : tone === "mana" ? "bg-mana" : "bg-brass";
   return (
     <div>
       <div className="flex items-baseline justify-between text-[11px] uppercase tracking-[0.16em] text-mute">
@@ -78,7 +79,7 @@ export function Meter({
         </span>
       </div>
       <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-black/50">
-        <div className={cx("h-full rounded-full", tone === "hp" ? "bg-hp" : "bg-mana")} style={{ width: `${pct}%` }} />
+        <div className={cx("h-full rounded-full", bar)} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

@@ -212,24 +212,26 @@ describe("two players and a GM handoff", () => {
     }, ID.justin);
     expect(character(state, ID.rob).charisma).toBe(9);
     expect(character(state, ID.rob).ac).toBe(14);
+    expect(character(state, ID.rob).hp).toBe(37);
+    expect(character(state, ID.rob).hpMax).toBe(37);
   });
 
   it("lets the GM mend a seated hero, and keeps another player's sheet closed", () => {
     let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
-    expect(() =>
-      run(
-        state,
-        {
-          type: "applyHarm",
-          target: { kind: "character", id: ID.naibroch },
-          amount: 10,
-          direction: "harm",
-          summary: "Naibroch takes 10.",
-        },
-        ID.trish,
-        "harm",
-      ),
-    ).toThrow(/someone else/);
+    const struck = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.naibroch },
+        amount: 10,
+        direction: "harm",
+        summary: "Elowynne attacks Naibroch (ally): Full damage, 10 damage.",
+      },
+      ID.trish,
+      "harm",
+    );
+    expect(character(struck, ID.naibroch).hp).toBe(26);
+    expect(struck.log.at(-1)?.summary).toContain("(ally)");
     expect(() => run(state, { type: "grantCover", characterIds: [ID.naibroch, ID.elowynne], tempAc: 2 }, ID.trish, "cover")).toThrow(
       /someone else/,
     );
@@ -315,6 +317,7 @@ describe("character privacy", () => {
     expect(card.hpMax).toBe(0);
     expect(card.mana).toBe(0);
     expect(card.ac).toBe(0);
+    expect(card.strike).toEqual({ ac: 14, energyShield: false });
     expect(card.heroPoints).toBe(0);
     expect(card.charisma).toBe(0);
 
@@ -496,5 +499,258 @@ describe("trouble library", () => {
     if (!wolf) throw new Error("wolf");
     expect(() => run(state, { type: "saveTrouble", trouble: { ...wolf, name: "  " } }, ID.corbin)).toThrow(/name/i);
     expect(() => applyAction(state, { type: "spawnTrouble", troubleId: ID.wolf, count: 13 }, ctx(ID.corbin, ["x"]))).toThrow(/12/);
+  });
+
+  it("lets the owner set a tank and Universal Credits, and refuses another player", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 13 }, credits: 16600 } },
+      ID.trish,
+      "set",
+    );
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 13 });
+    expect(character(state, ID.elowynne).credits).toBe(16600);
+    expect(state.log.some((entry) => entry.kind === "credits" && entry.summary.includes("16,600 UC"))).toBe(true);
+    expect(() => run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { credits: 1 } }, ID.justin)).toThrow(
+      /someone else/,
+    );
+    expect(() =>
+      run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 1 } } }, ID.justin),
+    ).toThrow(/someone else/);
+
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { credits: 10 } }, ID.corbin, "gm-credits");
+    expect(character(state, ID.elowynne).credits).toBe(10);
+  });
+
+  it("banks tank from damage, caps it, and leaves a sheet without one alone", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 13 } } },
+      ID.trish,
+      "tank",
+    );
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 4,
+        direction: "harm",
+        summary: "Elowynne takes 4.",
+      },
+      ID.corbin,
+      "harm",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(25);
+    expect(character(state, ID.elowynne).kineticTank?.points).toBe(21);
+    expect(state.log.at(-1)?.summary).toContain("Tank 13 → 21");
+
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 22, brace: true } } },
+      ID.trish,
+      "brace",
+    );
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 4,
+        direction: "harm",
+        summary: "Elowynne takes 4.",
+      },
+      ID.corbin,
+      "braced",
+    );
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 24 });
+    expect(state.log.at(-1)?.summary).toContain("Brace");
+
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 3,
+        direction: "heal",
+        summary: "Elowynne recovers 3.",
+      },
+      ID.corbin,
+      "heal",
+    );
+    expect(character(state, ID.elowynne).kineticTank?.points).toBe(24);
+    expect(state.log.at(-1)?.summary).not.toContain("Tank");
+
+    const quiet = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.reginald },
+        amount: 2,
+        direction: "harm",
+        summary: "Reginald takes 2.",
+      },
+      ID.corbin,
+      "plain",
+    );
+    expect(character(quiet, ID.reginald).kineticTank).toBeUndefined();
+    expect(quiet.log.at(-1)?.summary).toBe("Reginald takes 2.");
+  });
+
+  it("lets another player land a blow that banks the tank, and refuses a public card", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 13, brace: true } } },
+      ID.trish,
+      "tank",
+    );
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 4,
+        direction: "harm",
+        breakShield: true,
+        summary: "Naibroch attacks Elowynne (ally): Full damage, 4 damage.",
+      },
+      ID.justin,
+      "ally",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(25);
+    expect(character(state, ID.elowynne).energyShield).toBe(false);
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 24 });
+    expect(state.log.at(-1)?.summary).toContain("(ally)");
+    expect(state.log.at(-1)?.summary).toContain("Brace");
+    expect(() =>
+      run(present(state, ID.justin), {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 1,
+        direction: "harm",
+        summary: "Again.",
+      }, ID.justin),
+    ).toThrow(/private/);
+    expect(() => run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { notes: "nope" } }, ID.justin)).toThrow(
+      /someone else/,
+    );
+  });
+
+  it("empties a tank on a long rest and leaves it through a short rest", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 13, brace: true, overload: 4 } } },
+      ID.trish,
+      "tank",
+    );
+    state = run(state, { type: "shortRest" }, ID.corbin, "short");
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 13, brace: true, overload: 4 });
+    state = run(state, { type: "longRest" }, ID.corbin, "long");
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 0 });
+    expect(character(state, ID.reginald).kineticTank).toBeUndefined();
+    expect(state.log.at(-1)?.summary).toContain("Kinetic tanks empty");
+  });
+
+  it("puts the Bronze Lion Mask on and off by the suit's hit-point bonus", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    const off = {
+      on: false,
+      name: "Bronze Lion Mask",
+      onCha: 9,
+      offCha: 9,
+      onAc: 10,
+      offAc: 15,
+      onHpMax: 38,
+      offHpMax: 28,
+    };
+    state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { suit: off } }, ID.trish, "attach");
+    expect(character(state, ID.elowynne).ac).toBe(15);
+    expect(character(state, ID.elowynne).hpMax).toBe(28);
+    expect(character(state, ID.elowynne).hp).toBe(28);
+    expect(character(state, ID.elowynne).charisma).toBe(9);
+
+    state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { suit: { ...off, on: true } } }, ID.trish, "on");
+    expect(character(state, ID.elowynne).ac).toBe(10);
+    expect(character(state, ID.elowynne).hpMax).toBe(38);
+    expect(character(state, ID.elowynne).hp).toBe(38);
+
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 4,
+        direction: "harm",
+        summary: "Elowynne takes 4.",
+      },
+      ID.trish,
+      "hit",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(34);
+
+    state = run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { suit: off } }, ID.trish, "off");
+    expect(character(state, ID.elowynne).ac).toBe(15);
+    expect(character(state, ID.elowynne).hpMax).toBe(28);
+    expect(character(state, ID.elowynne).hp).toBe(24);
+    expect(() => run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { suit: { ...off, on: true } } }, ID.justin)).toThrow(
+      /someone else/,
+    );
+  });
+
+  it("lets the GM correct hit points without banking, and bank only when told", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(state, { type: "claimGm" }, ID.corbin, "gm");
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 13, brace: true } } },
+      ID.trish,
+      "tank",
+    );
+    expect(() => run(state, { type: "setHitPoints", characterId: ID.elowynne, hp: 20 }, ID.trish)).toThrow(/GM/);
+
+    state = run(state, { type: "setHitPoints", characterId: ID.elowynne, hp: 20 }, ID.corbin, "correct");
+    expect(character(state, ID.elowynne).hp).toBe(20);
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 13, brace: true });
+    expect(state.log.at(-1)?.kind).toBe("damage");
+    expect(state.log.at(-1)?.summary).toContain("Correction");
+    expect(state.log.at(-1)?.summary).toContain("unchanged");
+
+    state = run(
+      state,
+      { type: "setHitPoints", characterId: ID.elowynne, hp: 16, countsAsDamage: true },
+      ID.corbin,
+      "real",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(16);
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 24 });
+    expect(state.log.at(-1)?.summary).toContain("takes 4");
+    expect(state.log.at(-1)?.summary).toContain("Brace");
+
+    state = run(
+      state,
+      { type: "setHitPoints", characterId: ID.elowynne, hp: 19, countsAsDamage: true },
+      ID.corbin,
+      "mend",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(19);
+    expect(character(state, ID.elowynne).kineticTank?.points).toBe(24);
+    expect(state.log.at(-1)?.summary).toContain("recovers 3");
+
+    state = run(
+      state,
+      { type: "setHitPoints", characterId: ID.reginald, hp: 20, countsAsDamage: true },
+      ID.corbin,
+      "plain",
+    );
+    expect(character(state, ID.reginald).hp).toBe(20);
+    expect(character(state, ID.reginald).kineticTank).toBeUndefined();
+    expect(state.log.at(-1)?.summary).not.toContain("Tank");
   });
 });

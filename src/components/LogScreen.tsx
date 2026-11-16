@@ -16,6 +16,7 @@ const LABEL: Record<string, string> = {
   hero: "Hero",
   gm: "GM",
   note: "Table",
+  credits: "Credits",
 };
 
 export function LogScreen({ code }: { code: string }) {

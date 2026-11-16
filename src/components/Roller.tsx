@@ -1,19 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Action, Character, Foe, LogKind, Spell, StatName, Weapon } from "@/lib/model";
+import type { Action, Character, Foe, KineticTank, LogKind, Spell, StatName, Weapon } from "@/lib/model";
 import { effectiveAc, statValue } from "@/lib/model";
 import {
   damageBonus,
   outcomeLabel,
+  overloadStrike,
   resolveAttack,
   resolveCast,
   resolveCheck,
+  spendTankPoints,
+  tankToDamage,
+  tankWithPoints,
   type AttackResult,
   type CastResult,
   type CheckResult,
 } from "@/lib/rules";
+import { RuleError } from "@/lib/rules/errors";
 import { QUICK_DCS } from "@/lib/data/catalog";
+import { allyAttackLog, type AllyTarget } from "@/lib/table/strike";
 import { Button, Kicker } from "./ui";
 
 type Kind = "attack" | "cast" | "check";
@@ -25,6 +31,7 @@ export function Roller({
   spell,
   foes,
   heroes,
+  allies = [],
   canSpend,
   dispatch,
   onClose,
@@ -35,6 +42,8 @@ export function Roller({
   spell?: Spell;
   foes: Foe[];
   heroes: Character[];
+  /** Other seated heroes. Hidden until the player asks to strike an ally. */
+  allies?: AllyTarget[];
   canSpend: boolean;
   dispatch: (action: Action) => Promise<unknown>;
   onClose: () => void;
@@ -42,6 +51,7 @@ export function Roller({
   const [tagId, setTagId] = useState("");
   const [hitStat, setHitStat] = useState<StatName | "none">(weapon?.hitStat ?? "combat");
   const [targetId, setTargetId] = useState(foes[0]?.id ?? "custom");
+  const [includeAllies, setIncludeAllies] = useState(false);
   const [ac, setAc] = useState(String(foes[0]?.ac ?? 12));
   const [dc, setDc] = useState(12);
   const [focus, setFocus] = useState(Boolean(character.focusOn && character.focusCastBonus));
@@ -53,8 +63,10 @@ export function Roller({
   const [blows, setBlows] = useState<Blow[] | null>(null);
   const [cast, setCast] = useState<CastResult | null>(null);
   const [check, setCheck] = useState<CheckResult | null>(null);
+  const [tankSpend, setTankSpend] = useState("0");
 
   const foe = foes.find((item) => item.id === targetId);
+  const ally = includeAllies ? allies.find((item) => item.id === targetId) : undefined;
   const count = weapon?.attacksPerRound ?? 1;
   const tagArmed = Boolean(tagId);
 
@@ -74,7 +86,7 @@ export function Roller({
       ignoreAc: weapon?.ignoreAc,
       damageExpression: weapon?.damage ?? "0",
       damageBonus: damageBonus(statValue(character, bonusName), weapon?.bonusMode ?? "half"),
-      energyShield: Boolean(foe?.energyShield),
+      energyShield: Boolean(ally ? ally.energyShield : foe?.energyShield),
       overheatsOnNat1: weapon?.overheatsOnNat1,
       lockedDiceTotal: locked,
     });
@@ -110,7 +122,8 @@ export function Roller({
           patch: { weapons: character.weapons.map((item) => (item.id === weapon.id ? { ...item, overheated: true } : item)) },
         });
       }
-      await log("roll", attackSummary(character.name, weapon?.name ?? "Strike", next.map((blow) => blow.result)));
+      const rolled = attackSummary(character.name, weapon?.name ?? "Strike", next.map((blow) => blow.result));
+      await log("roll", ally ? `${character.name} attacks ${ally.name} (ally). ${rolled}` : rolled);
     });
 
   const adjust = (index: number, mode: "reroll" | "plus4") =>
@@ -131,7 +144,16 @@ export function Roller({
   const rollCast = () =>
     run(async () => {
       if (!spell) return;
+      const tank = character.kineticTank;
+      const use = spell.tank?.use;
+      const wantsSpend = Boolean(tank && (use === "spend" || use === "overload"));
+      const spent = wantsSpend && tank ? commitTankSpend(tankSpend, tank.points) : 0;
       await dispatch({ type: "spendMana", characterId: character.id, amount: spell.cost });
+      if (spent > 0 && tank) {
+        const next = tankWithPoints(tank, spendTankPoints(tank.points, spent));
+        if (use === "overload") next.overload = (tank.overload ?? 0) + spent;
+        await dispatch({ type: "patchCharacter", characterId: character.id, patch: { kineticTank: next } });
+      }
       const d12 = rollDie();
       const result = resolveCast({
         d12,
@@ -144,9 +166,21 @@ export function Roller({
         bonusMode: spell.bonusMode,
         tempAc: spell.tempAc,
       });
+      if (result.success && use === "spend" && spell.tank?.pointsPerDamage) {
+        result.damage = tankToDamage(spent, spell.tank.pointsPerDamage);
+        result.diceText = `${spent} tank`;
+      }
+      if (result.success && use === "brace" && tank) {
+        await dispatch({
+          type: "patchCharacter",
+          characterId: character.id,
+          patch: { kineticTank: { ...tankWithPoints(tank, tank.points), brace: true } },
+        });
+      }
       setCast(result);
       const end = result.fizzle ? "Fizzle. The mana stays spent." : result.potent ? "Potent." : "It takes.";
-      await log("spell", `${character.name} casts ${spell.name} (${spell.cost} mana). ${result.equation}. ${end}`);
+      const spentNote = spent > 0 ? ` Spends ${spent} tank.` : "";
+      await log("spell", `${character.name} casts ${spell.name} (${spell.cost} mana). ${result.equation}. ${end}${spentNote}`);
     });
 
   const rerollCast = () =>
@@ -206,33 +240,64 @@ export function Roller({
 
   const harm = blows ? blows.reduce((sum, blow) => sum + shownDamage(blow.result, saveMade), 0) : 0;
   const castDamage = cast?.damage == null ? null : saveMade ? Math.floor(cast.damage / 2) : cast.damage;
+  const connecting = blows?.some((blow) => blow.result.outcome !== "miss" && blow.result.outcome !== "swallowed") ?? false;
+  const meleeTank = Boolean(character.kineticTank) && weapon?.melee !== false && connecting;
+  const overloadPoints = meleeTank ? (character.kineticTank?.overload ?? 0) : 0;
+  const parsedSpend = character.kineticTank ? parseTankSpend(tankSpend, character.kineticTank.points) : { ok: true as const, amount: 0 };
+  const meleeSpend = meleeTank && overloadPoints === 0 && parsedSpend.ok ? parsedSpend.amount : 0;
+  const tankBonus = overloadPoints > 0 ? overloadStrike(overloadPoints) : meleeSpend;
+  const appliedHarm = harm + tankBonus;
 
   const applyAttack = () =>
     run(async () => {
-      if (!foe || !blows) return;
+      if ((!foe && !ally) || !blows) return;
+      if (meleeTank && overloadPoints === 0) commitTankSpend(tankSpend, character.kineticTank?.points ?? 0);
       const swallowed = blows.some((blow) => blow.result.shieldDropped);
       const names = blows.map((blow) => outcomeLabel(blow.result.outcome)).join(", ");
+      const tankNote =
+        overloadPoints > 0
+          ? ` Overload adds ${tankBonus}. The tank drops to 0.`
+          : meleeSpend > 0
+            ? ` ${meleeSpend} from the tank.`
+            : "";
+      const detail = `${names}, ${appliedHarm} damage.${tankNote}${swallowed ? " The energy shield drops." : ""}`;
       await dispatch({
         type: "applyHarm",
-        target: { kind: "foe", id: foe.id },
-        amount: harm,
+        target: ally ? { kind: "character", id: ally.id } : { kind: "foe", id: foe!.id },
+        amount: appliedHarm,
         direction: "harm",
         breakShield: swallowed,
-        summary: `${character.name} hits ${foe.name}: ${names}, ${harm} damage.${swallowed ? " The energy shield drops." : ""}`,
+        summary: ally
+          ? allyAttackLog(character.name, ally.name, detail)
+          : `${character.name} hits ${foe!.name}: ${detail}`,
       });
+      const tank = character.kineticTank;
+      if (overloadPoints > 0 && tank) {
+        const emptied: KineticTank = { points: 0 };
+        if (tank.brace) emptied.brace = true;
+        await dispatch({ type: "patchCharacter", characterId: character.id, patch: { kineticTank: emptied } });
+      } else if (meleeSpend > 0 && tank) {
+        await dispatch({
+          type: "patchCharacter",
+          characterId: character.id,
+          patch: { kineticTank: tankWithPoints(tank, spendTankPoints(tank.points, meleeSpend)) },
+        });
+      }
       onClose();
     });
 
   const applyCast = () =>
     run(async () => {
       if (!spell || !cast?.success) return;
-      if (castDamage != null && foe) {
+      if (castDamage != null && (foe || ally)) {
         await dispatch({
           type: "applyHarm",
-          target: { kind: "foe", id: foe.id },
+          target: ally ? { kind: "character", id: ally.id } : { kind: "foe", id: foe!.id },
           amount: castDamage,
           direction: "harm",
-          summary: `${spell.name} deals ${castDamage} to ${foe.name}.`,
+          summary: ally
+            ? `${spell.name} deals ${castDamage} to ${ally.name} (ally).`
+            : `${spell.name} deals ${castDamage} to ${foe!.name}.`,
         });
       }
       if (cast.healing) {
@@ -266,19 +331,54 @@ export function Roller({
         </div>
 
         {kind !== "check" ? (
-          <label className="grid gap-1 text-sm">
-            <span className="text-mute">Target</span>
-            <select className="min-h-11 rounded-xl border border-line bg-panel px-3" value={targetId} onChange={(event) => {
-              setTargetId(event.target.value);
-              const next = foes.find((item) => item.id === event.target.value);
-              if (next) setAc(String(next.ac));
-            }}>
-              {foes.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · AC {item.ac}{item.energyShield ? " · shield" : ""}</option>
-              ))}
-              <option value="custom">Type an AC</option>
-            </select>
-          </label>
+          <div className="grid gap-2">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                className="mt-1"
+                type="checkbox"
+                checked={includeAllies}
+                onChange={(event) => {
+                  const on = event.target.checked;
+                  setIncludeAllies(on);
+                  if (!on && allies.some((item) => item.id === targetId)) {
+                    const first = foes[0];
+                    setTargetId(first?.id ?? "custom");
+                    if (first) setAc(String(first.ac));
+                  }
+                }}
+              />
+              <span>
+                Include allies
+                <span className="mt-1 block text-mute">Mind control or rage. Off, so a foe stays selected.</span>
+              </span>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-mute">Target</span>
+              <select className="min-h-11 rounded-xl border border-line bg-panel px-3" value={targetId} onChange={(event) => {
+                const id = event.target.value;
+                setTargetId(id);
+                const nextFoe = foes.find((item) => item.id === id);
+                const nextAlly = allies.find((item) => item.id === id);
+                if (nextFoe) setAc(String(nextFoe.ac));
+                else if (nextAlly) setAc(String(nextAlly.ac));
+              }}>
+                <optgroup label="Trouble">
+                  {foes.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name} · AC {item.ac}{item.energyShield ? " · shield" : ""}</option>
+                  ))}
+                </optgroup>
+                {includeAllies ? (
+                  <optgroup label="Allies">
+                    {allies.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name} · AC {item.ac}{item.energyShield ? " · shield" : ""}</option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                <option value="custom">Type an AC</option>
+              </select>
+            </label>
+            {ally ? <p className="text-sm text-brass">Ally. The same armor class, shield, and save rules apply.</p> : null}
+          </div>
         ) : null}
 
         {kind === "attack" ? (
@@ -329,6 +429,15 @@ export function Roller({
             <input type="checkbox" checked={focus} onChange={(event) => setFocus(event.target.checked)} />
             Staff focus +{character.focusCastBonus} to the casting roll
           </label>
+        ) : null}
+
+        {kind === "cast" && spell?.tank && character.kineticTank && !cast ? (
+          <TankCast
+            spell={spell}
+            points={character.kineticTank.points}
+            spend={tankSpend}
+            onSpend={setTankSpend}
+          />
         ) : null}
 
         {!blows && !cast && !check ? (
@@ -409,9 +518,28 @@ export function Roller({
           </label>
         ) : null}
 
-        {blows && foe ? (
-          <Button disabled={busy || harm < 0} onClick={() => void applyAttack()}>
-            Apply {harm} to {foe.name}
+        {blows && meleeTank && overloadPoints > 0 ? (
+          <p className="text-sm text-brass">
+            Overload adds {tankBonus} to this hit, then the tank drops to 0.
+          </p>
+        ) : null}
+        {blows && meleeTank && overloadPoints === 0 && character.kineticTank ? (
+          <label className="grid gap-1 text-sm">
+            <span className="text-mute">Spend tank on this melee hit · 1 point = +1 damage · {character.kineticTank.points} in the tank</span>
+            <input
+              className="num min-h-11 rounded-xl border border-line bg-panel px-3"
+              inputMode="numeric"
+              aria-label="Spend tank"
+              value={tankSpend}
+              onChange={(event) => setTankSpend(event.target.value)}
+            />
+            {parsedSpend.ok ? null : <span className="text-hp">{parsedSpend.message}</span>}
+          </label>
+        ) : null}
+
+        {blows && (foe || ally) ? (
+          <Button disabled={busy || appliedHarm < 0 || (meleeTank && overloadPoints === 0 && !parsedSpend.ok)} onClick={() => void applyAttack()}>
+            Apply {appliedHarm} to {ally?.name ?? foe?.name}
           </Button>
         ) : null}
         {cast?.success && (cast.damage != null || cast.healing || cast.tempAc) ? (
@@ -438,6 +566,65 @@ export function Roller({
       </div>
     </div>
   );
+}
+
+function TankCast({
+  spell,
+  points,
+  spend,
+  onSpend,
+}: {
+  spell: Spell;
+  points: number;
+  spend: string;
+  onSpend: (value: string) => void;
+}) {
+  const use = spell.tank?.use;
+  if (!use) return null;
+  if (use === "brace") {
+    return (
+      <p className="text-sm text-mute">
+        Brace. If the cast takes, the next damage banks 3 tank per point instead of 2. It spends no tank.
+      </p>
+    );
+  }
+  const rate = spell.tank?.pointsPerDamage;
+  const parsed = Number(spend);
+  const whole = Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  const preview = whole == null ? null : rate ? tankToDamage(whole, rate) : null;
+  return (
+    <label className="grid gap-1 text-sm">
+      <span className="text-mute">
+        {use === "overload"
+          ? `Spend tank. The next melee hit adds double that, then the tank drops to 0. ${points} in the tank.`
+          : rate
+            ? `Spend tank. Every ${rate} points = 1 damage. ${points} in the tank.`
+            : `Spend tank. The table splits it. ${points} in the tank.`}
+      </span>
+      <input
+        className="num min-h-11 rounded-xl border border-line bg-panel px-3"
+        inputMode="numeric"
+        aria-label="Tank points to spend"
+        value={spend}
+        onChange={(event) => onSpend(event.target.value)}
+      />
+      {preview != null ? <span className="text-mute">{whole} tank → {preview} damage.</span> : null}
+    </label>
+  );
+}
+
+function parseTankSpend(raw: string, available: number): { ok: true; amount: number } | { ok: false; message: string } {
+  if (raw.trim() === "") return { ok: true, amount: 0 };
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return { ok: false, message: "Spend a whole number of tank points." };
+  if (parsed > available) return { ok: false, message: "Not enough in the tank." };
+  return { ok: true, amount: parsed };
+}
+
+function commitTankSpend(raw: string, available: number): number {
+  const parsed = parseTankSpend(raw, available);
+  if (!parsed.ok) throw new RuleError(parsed.message);
+  return parsed.amount;
 }
 
 type Blow = { d12: number; heroPlus: number; result: AttackResult };

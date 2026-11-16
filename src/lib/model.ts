@@ -23,6 +23,11 @@ export type Weapon = {
   overheated?: boolean;
   notes?: string;
   attacksPerRound?: number;
+  /**
+   * Melee hits can spend a kinetic tank, 1 point for 1 damage.
+   * False hides that control. Missing still offers it when the sheet has a tank.
+   */
+  melee?: boolean;
 };
 
 export type Spell = {
@@ -39,14 +44,58 @@ export type Spell = {
   /** Strength (or another) save cuts the harm in half. The table calls it. */
   saveForHalf?: boolean;
   notes?: string;
+  /**
+   * How this spell uses a kinetic tank, when the caster has one.
+   * Omitted spells ignore the tank. The sheet stores this; the rules do not match on names.
+   */
+  tank?: SpellTank;
+};
+
+/**
+ * brace: reaction. The next damage taken banks 3 per point instead of 2.
+ * spend: ask how many points to spend and deduct them when the spell is cast.
+ * overload: ask, deduct, and remember the spend. The next melee hit adds twice
+ * that many damage, then the tank drops to 0.
+ */
+export type SpellTank = {
+  use: "brace" | "spend" | "overload";
+  /**
+   * Tank points that equal 1 damage. Kinetic Throw is 2.
+   * Omit when the table splits the points and nothing is converted here.
+   */
+  pointsPerDamage?: number;
 };
 
 export type Suit = {
   on: boolean;
+  /** Shown on the toggle. Missing reads as "Suit", which is the jester suit. */
+  name?: string;
   onCha: number;
   offCha: number;
   onAc: number;
   offAc: number;
+  /**
+   * Max hit points while worn, and while off.
+   * Both are set, or neither. The difference is the bonus added to current HP
+   * when the suit is put on and removed when it is taken off.
+   */
+  onHpMax?: number;
+  offHpMax?: number;
+};
+
+/**
+ * Opt-in kinetic tank. Missing means the sheet has no tank.
+ * The cap is 3 × Combat and is not stored.
+ */
+export type KineticTank = {
+  points: number;
+  /** Armed by Brace. The next damage taken banks 3 per point, then this clears. */
+  brace?: boolean;
+  /**
+   * Armed by Overload. These points were already deducted.
+   * The next melee hit adds twice this many damage, then the tank drops to 0.
+   */
+  overload?: number;
 };
 
 /** contain shows the whole photo in the sheet frame. cover crops that frame. */
@@ -82,6 +131,13 @@ export type Character = {
   tempAc: number;
   defenseTagActive: boolean;
   heroPoints: number;
+  /**
+   * Universal Credits. Missing on an old sheet is 0.
+   * Not read out of the inventory text.
+   */
+  credits?: number;
+  /** Opt-in. Other sheets leave this off. */
+  kineticTank?: KineticTank;
   tags: Tag[];
   weapons: Weapon[];
   spells: Spell[];
@@ -112,6 +168,18 @@ export type Character = {
   claimed?: boolean;
   /** Set on a public card when hit points are 0. The hit point number stays hidden. */
   down?: boolean;
+  /**
+   * On a public card only. Armor class to strike (suit, temporary AC, and a
+   * defensive tag already included) and whether an energy shield is up.
+   * The card's own ac stays 0. Hit points stay hidden.
+   */
+  strike?: StrikeProfile;
+};
+
+/** What another player needs in order to swing at this hero. */
+export type StrikeProfile = {
+  ac: number;
+  energyShield: boolean;
 };
 
 export type Foe = {
@@ -190,7 +258,7 @@ export type TableMeta = {
   gmNotes: string;
 };
 
-export type LogKind = "roll" | "damage" | "spell" | "advance" | "rest" | "session" | "hero" | "gm" | "note";
+export type LogKind = "roll" | "damage" | "spell" | "advance" | "rest" | "session" | "hero" | "gm" | "note" | "credits";
 
 export type LogEntry = {
   id: string;
@@ -249,8 +317,12 @@ export type CharacterPatch = Partial<
     | "playerName"
     | "portraitFit"
     | "portraitFocus"
+    | "credits"
   >
->;
+> & {
+  /** Null turns the kinetic tank off. Omit the key to leave it alone. */
+  kineticTank?: KineticTank | null;
+};
 
 export type Action =
   | { type: "join"; member: Member }
@@ -289,6 +361,17 @@ export type Action =
       breakShield?: boolean;
       onlySeated?: boolean;
       summary: string;
+    }
+  | {
+      /**
+       * The GM sets hit points outright.
+       * countsAsDamage banks a kinetic tank from the hit points actually lost.
+       * Left off, the change is a correction and the tank stays put.
+       */
+      type: "setHitPoints";
+      characterId: string;
+      hp: number;
+      countsAsDamage?: boolean;
     }
   | { type: "spendMana"; characterId: string; amount: number }
   | { type: "grantCover"; characterIds: string[]; tempAc: number }

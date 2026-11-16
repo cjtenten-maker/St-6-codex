@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { WEAPONS, SPELLS } from "@/lib/data/catalog";
-import type { Character, Spell, StatName, Weapon } from "@/lib/model";
+import type { Character, CharacterPatch, KineticTank, LogEntry, Spell, StatName, Weapon } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
-import { manaMaximum } from "@/lib/rules";
+import { formatUc, manaMaximum, suitToggleLabel, tankCap, tankWithPoints } from "@/lib/rules";
+import { allyTargets } from "@/lib/table/strike";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
 import { Portrait, PortraitControls, PortraitFraming } from "./Portrait";
@@ -101,6 +102,8 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
   const canPortrait = canEdit && character.ownerId !== null;
   const editableHeroes = state.characters.filter((hero) => !hero.concealed && (isGm || hero.ownerId === viewer.id));
   const manaMax = manaMaximum(character.arcana);
+  const tankMax = character.kineticTank ? tankCap(character.combat) : 0;
+  const credits = character.credits ?? 0;
   const ac = effectiveAc(character);
   const weapons = withUnarmed(character.weapons);
   const owner = state.members.find((member) => member.id === character.ownerId);
@@ -201,13 +204,47 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         <div className="grid gap-3">
           <Meter label="Hit points" value={character.hp} max={character.hpMax} tone="hp" />
           <Meter label="Mana" value={character.mana} max={manaMax} tone="mana" />
+          {character.kineticTank ? (
+            <Meter label="Kinetic tank" value={character.kineticTank.points} max={tankMax} tone="tank" />
+          ) : null}
         </div>
+        {character.kineticTank?.brace ? (
+          <p className="mt-2 text-sm text-brass">Brace is armed. The next damage banks 3 tank per point.</p>
+        ) : null}
+        {character.kineticTank?.overload ? (
+          <p className="mt-2 text-sm text-brass">
+            Overload is armed. The next melee hit adds {character.kineticTank.overload * 2}, then the tank drops to 0.
+          </p>
+        ) : null}
         {canEdit ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button tone="ghost" className="min-h-9 px-3" onClick={() => bump("harm")}>−1 HP</Button>
-            <Button tone="ghost" className="min-h-9 px-3" onClick={() => bump("heal")}>+1 HP</Button>
-            <Button tone="ghost" className="min-h-9 px-3" onClick={() => act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { mana: character.mana - 1 } }))}>−1 mana</Button>
-            <Button tone="ghost" className="min-h-9 px-3" onClick={() => act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { mana: character.mana + 1 } }))}>+1 mana</Button>
+          <div className="mt-3 grid gap-2">
+            <div className="flex flex-wrap gap-2">
+              <Button tone="ghost" className="min-h-9 px-3" onClick={() => bump("harm")}>−1 HP</Button>
+              <Button tone="ghost" className="min-h-9 px-3" onClick={() => bump("heal")}>+1 HP</Button>
+              <Button tone="ghost" className="min-h-9 px-3" onClick={() => act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { mana: character.mana - 1 } }))}>−1 mana</Button>
+              <Button tone="ghost" className="min-h-9 px-3" onClick={() => act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { mana: character.mana + 1 } }))}>+1 mana</Button>
+            </div>
+            {character.kineticTank ? (
+              <PointSet
+                key={`tank-${character.kineticTank.points}`}
+                value={character.kineticTank.points}
+                min={0}
+                max={tankMax}
+                unit="tank"
+                label="Set kinetic tank"
+                onCommit={(points) => {
+                  const tank = character.kineticTank;
+                  if (!tank) return;
+                  act(() =>
+                    table.dispatch({
+                      type: "patchCharacter",
+                      characterId: character.id,
+                      patch: { kineticTank: tankWithPoints(tank, points) },
+                    }),
+                  );
+                }}
+              />
+            ) : null}
           </div>
         ) : null}
         <div className="mt-4 flex items-end justify-between">
@@ -225,6 +262,26 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
             <div className="mt-2"><Pips value={character.heroPoints} /></div>
           </div>
         </div>
+      </Card>
+
+      <Card className="mt-3">
+        <Kicker>Universal Credits</Kicker>
+        <p className="num mt-1 font-display text-4xl leading-none">{formatUc(credits)}</p>
+        <p className="mt-1 text-xs text-mute">The sheet's money. Level-ups and new skills go in Advances, further down.</p>
+        {canEdit ? (
+          <div className="mt-3">
+            <PointSet
+              key={`uc-${credits}`}
+              value={credits}
+              min={0}
+              unit="UC"
+              label="Set Universal Credits"
+              onCommit={(next) =>
+                act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { credits: next } }))
+              }
+            />
+          </div>
+        ) : null}
       </Card>
 
       <section className="mt-4">
@@ -268,7 +325,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
               )
             }
           >
-            {character.suit.on ? "Suit on · Charisma 12, AC 17" : "Suit off · Charisma 9, AC 14"}
+            {suitToggleLabel(character.suit)}
           </Button>
         </div>
       ) : null}
@@ -333,7 +390,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="leading-tight">{spell.name}</h3>
-                  <p className="text-sm text-mute">{spell.cost} mana · {spell.effect}</p>
+                  <p className="text-sm text-mute">{spell.cost} mana · {spell.effect}{tankSpellNote(spell)}</p>
                 </div>
                 <Button tone="ghost" disabled={character.mana < spell.cost} onClick={() => setRoll({ kind: "cast", spell })}>
                   Cast
@@ -364,27 +421,25 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         ) : null}
       </div>
 
-      {canEdit ? (
-        <form
-          className="mt-4 flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            act(async () => {
-              await table.dispatch({ type: "advance", characterId: character.id, text: advance });
-              setAdvance("");
-            });
-          }}
-        >
-          <TextField value={advance} onChange={(event) => setAdvance(event.target.value)} placeholder="Note an advance" aria-label="Advance" />
-          <Button type="submit" tone="ghost">Bank</Button>
-        </form>
-      ) : null}
-
       <section className="mt-6 grid gap-3 text-sm leading-relaxed">
         {character.abilities ? <Block title="Abilities" body={character.abilities} /> : null}
         {character.inventory ? <Block title="Inventory" body={character.inventory} /> : null}
         {character.notes ? <Block title="Notes" body={character.notes} /> : null}
       </section>
+
+      <Advances
+        name={character.name}
+        log={state.log}
+        canEdit={canEdit}
+        draft={advance}
+        onDraft={setAdvance}
+        onLog={() =>
+          act(async () => {
+            await table.dispatch({ type: "advance", characterId: character.id, text: advance });
+            setAdvance("");
+          })
+        }
+      />
 
       {canEdit ? (
         <div className="mt-4">
@@ -397,10 +452,10 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         <Amend
           character={character}
           onSave={async (patch) => {
-            const { portraitPath, portraitFit, portraitFocus, ...sheet } = patch;
-            void portraitPath;
+            const { portraitFit, portraitFocus, credits: _credits, ...sheet } = patch;
             void portraitFit;
             void portraitFocus;
+            void _credits;
             await table.dispatch({ type: "patchCharacter", characterId: character.id, patch: sheet });
             setAmending(false);
           }}
@@ -418,6 +473,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           spell={roll.kind === "cast" ? roll.spell : undefined}
           foes={state.foes}
           heroes={editableHeroes}
+          allies={allyTargets(state.characters, character.id)}
           canSpend={canSpend}
           dispatch={table.dispatch}
           onClose={() => setRoll(null)}
@@ -449,6 +505,7 @@ function withUnarmed(weapons: Weapon[]): Weapon[] {
       hitStat: catalog.hitStat,
       bonusMode: catalog.bonusMode,
       notes: catalog.notes,
+      melee: true,
     },
   ];
 }
@@ -462,16 +519,124 @@ function Labeled({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function tankSpellNote(spell: Spell): string {
+  if (!spell.tank) return "";
+  if (spell.tank.use === "brace") return " · Brace: next damage banks 3 tank per point";
+  if (spell.tank.use === "overload") return " · spends tank; the next melee hit doubles it, then the tank empties";
+  if (spell.tank.pointsPerDamage) return ` · spends tank, ${spell.tank.pointsPerDamage} = 1 damage`;
+  return " · spends tank";
+}
+
+function PointSet({
+  value,
+  min,
+  max,
+  unit,
+  label,
+  onCommit,
+}: {
+  value: number;
+  min: number;
+  max?: number;
+  unit: string;
+  label: string;
+  onCommit: (next: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const atMin = value <= min;
+  const atMax = max != null && value >= max;
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" tone="ghost" className="min-h-9 px-3" disabled={atMin} onClick={() => onCommit(value - 1)}>
+          −1 {unit}
+        </Button>
+        <Button type="button" tone="ghost" className="min-h-9 px-3" disabled={atMax} onClick={() => onCommit(value + 1)}>
+          +1 {unit}
+        </Button>
+      </div>
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const next = Number(draft);
+          if (!Number.isFinite(next)) return;
+          onCommit(next);
+        }}
+      >
+        <TextField inputMode="numeric" aria-label={label} value={draft} onChange={(event) => setDraft(event.target.value)} />
+        <Button type="submit" tone="ghost">Set</Button>
+      </form>
+    </div>
+  );
+}
+
+function Advances({
+  name,
+  log,
+  canEdit,
+  draft,
+  onDraft,
+  onLog,
+}: {
+  name: string;
+  log: LogEntry[];
+  canEdit: boolean;
+  draft: string;
+  onDraft: (value: string) => void;
+  onLog: () => void;
+}) {
+  const prefix = `${name}:`;
+  const entries = log.filter((entry) => entry.kind === "advance" && entry.summary.startsWith(prefix));
+  return (
+    <section className="mt-6">
+      <h2 className="font-display text-2xl">Advances</h2>
+      <p className="mt-1 text-sm text-mute">
+        Record a level-up, new skill, or other growth. Saved to the table log. This is not Universal Credits.
+      </p>
+      {entries.length === 0 ? <p className="mt-3 text-sm text-mute">No advances logged yet.</p> : null}
+      {entries.length > 0 ? (
+        <ol className="mt-3 grid gap-2">
+          {entries.map((entry) => (
+            <li key={entry.id} className="rounded-2xl border border-line bg-panel px-3 py-3">
+              <p className="leading-snug">{entry.summary.slice(prefix.length).trim()}</p>
+              <p className="mt-1 text-xs text-mute">{new Date(entry.at).toLocaleString()}</p>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {canEdit ? (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onLog();
+          }}
+        >
+          <TextField
+            value={draft}
+            onChange={(event) => onDraft(event.target.value)}
+            placeholder="Level-up, new skill, or other growth"
+            aria-label="Advance"
+          />
+          <Button type="submit" tone="ghost">Log advance</Button>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
 function Amend({
   character,
   onSave,
   onRetire,
 }: {
   character: Character;
-  onSave: (patch: Partial<Character>) => Promise<void>;
+  onSave: (patch: CharacterPatch) => Promise<void>;
   onRetire: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(character);
+  const [tankOn, setTankOn] = useState(Boolean(character.kineticTank));
   const [error, setError] = useState<string | null>(null);
   const [confirmRetire, setConfirmRetire] = useState(false);
   const set = (patch: Partial<Character>) => setDraft({ ...draft, ...patch });
@@ -511,6 +676,15 @@ function Amend({
       <Labeled label="AC note">
         <TextField value={draft.acNote} aria-label="AC note" onChange={(event) => set({ acNote: event.target.value })} />
       </Labeled>
+      {draft.suit?.onHpMax != null ? (
+        <p className="text-xs text-mute">
+          {draft.suit.name?.trim() || "The suit"} sets AC and max HP. Use its toggle. Current HP still saves from here.
+        </p>
+      ) : null}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={tankOn} onChange={(event) => setTankOn(event.target.checked)} />
+        Kinetic tank · opt in. Cap is 3 × Combat. Other sheets leave this off.
+      </label>
       <Labeled label="Notes">
         <Area rows={3} value={draft.notes} aria-label="Notes" onChange={(event) => set({ notes: event.target.value })} />
       </Labeled>
@@ -573,7 +747,10 @@ function Amend({
         onClick={() => {
           const tags = draft.tags.filter((tag) => tag.label.trim());
           if (tags.length > 5) return setError("Five tags is the limit.");
-          void onSave({ ...draft, tags, name: draft.name.trim() || character.name }).catch((caught: Error) => setError(caught.message));
+          const kineticTank: KineticTank | null = tankOn ? (draft.kineticTank ?? { points: 0 }) : null;
+          void onSave({ ...draft, tags, name: draft.name.trim() || character.name, kineticTank }).catch((caught: Error) =>
+            setError(caught.message),
+          );
         }}
       >
         Save the amend
