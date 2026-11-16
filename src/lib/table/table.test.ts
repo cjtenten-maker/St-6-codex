@@ -218,20 +218,20 @@ describe("two players and a GM handoff", () => {
 
   it("lets the GM mend a seated hero, and keeps another player's sheet closed", () => {
     let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
-    expect(() =>
-      run(
-        state,
-        {
-          type: "applyHarm",
-          target: { kind: "character", id: ID.naibroch },
-          amount: 10,
-          direction: "harm",
-          summary: "Naibroch takes 10.",
-        },
-        ID.trish,
-        "harm",
-      ),
-    ).toThrow(/someone else/);
+    const struck = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.naibroch },
+        amount: 10,
+        direction: "harm",
+        summary: "Elowynne attacks Naibroch (ally): Full damage, 10 damage.",
+      },
+      ID.trish,
+      "harm",
+    );
+    expect(character(struck, ID.naibroch).hp).toBe(26);
+    expect(struck.log.at(-1)?.summary).toContain("(ally)");
     expect(() => run(state, { type: "grantCover", characterIds: [ID.naibroch, ID.elowynne], tempAc: 2 }, ID.trish, "cover")).toThrow(
       /someone else/,
     );
@@ -317,6 +317,7 @@ describe("character privacy", () => {
     expect(card.hpMax).toBe(0);
     expect(card.mana).toBe(0);
     expect(card.ac).toBe(0);
+    expect(card.strike).toEqual({ ac: 14, energyShield: false });
     expect(card.heroPoints).toBe(0);
     expect(card.charisma).toBe(0);
 
@@ -598,6 +599,46 @@ describe("trouble library", () => {
     );
     expect(character(quiet, ID.reginald).kineticTank).toBeUndefined();
     expect(quiet.log.at(-1)?.summary).toBe("Reginald takes 2.");
+  });
+
+  it("lets another player land a blow that banks the tank, and refuses a public card", () => {
+    let state = run(createDemoState(), { type: "claim", characterId: ID.elowynne }, ID.trish, "claim");
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { kineticTank: { points: 13, brace: true } } },
+      ID.trish,
+      "tank",
+    );
+    state = run(
+      state,
+      {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 4,
+        direction: "harm",
+        breakShield: true,
+        summary: "Naibroch attacks Elowynne (ally): Full damage, 4 damage.",
+      },
+      ID.justin,
+      "ally",
+    );
+    expect(character(state, ID.elowynne).hp).toBe(25);
+    expect(character(state, ID.elowynne).energyShield).toBe(false);
+    expect(character(state, ID.elowynne).kineticTank).toEqual({ points: 24 });
+    expect(state.log.at(-1)?.summary).toContain("(ally)");
+    expect(state.log.at(-1)?.summary).toContain("Brace");
+    expect(() =>
+      run(present(state, ID.justin), {
+        type: "applyHarm",
+        target: { kind: "character", id: ID.elowynne },
+        amount: 1,
+        direction: "harm",
+        summary: "Again.",
+      }, ID.justin),
+    ).toThrow(/private/);
+    expect(() => run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { notes: "nope" } }, ID.justin)).toThrow(
+      /someone else/,
+    );
   });
 
   it("empties a tank on a long rest and leaves it through a short rest", () => {

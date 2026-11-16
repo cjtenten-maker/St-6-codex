@@ -6,6 +6,7 @@ import { WEAPONS, SPELLS } from "@/lib/data/catalog";
 import type { Character, CharacterPatch, KineticTank, LogEntry, Spell, StatName, Weapon } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
 import { formatUc, manaMaximum, suitToggleLabel, tankCap, tankWithPoints } from "@/lib/rules";
+import { allyTargets } from "@/lib/table/strike";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
 import { Portrait, PortraitControls, PortraitFraming } from "./Portrait";
@@ -472,6 +473,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           spell={roll.kind === "cast" ? roll.spell : undefined}
           foes={state.foes}
           heroes={editableHeroes}
+          allies={allyTargets(state.characters, character.id)}
           canSpend={canSpend}
           dispatch={table.dispatch}
           onClose={() => setRoll(null)}

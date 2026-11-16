@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Character, Foe } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
 import { manaMaximum, outcomeLabel, resolveAttack, tankCap } from "@/lib/rules";
+import { foeAttackLog } from "@/lib/table/strike";
 import { isOwnCharacter } from "@/lib/table/present";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
@@ -28,6 +29,8 @@ export function GmScreen({ code }: { code: string }) {
   const [target, setTarget] = useState("");
   const [strike, setStrike] = useState<string | null>(null);
   const [countsAsDamage, setCountsAsDamage] = useState(false);
+  const [foeOnFoe, setFoeOnFoe] = useState(false);
+  const [foeTarget, setFoeTarget] = useState("");
 
   if (!codex.ready || !viewer) return <Frame><p className="text-mute">Taking your seat…</p></Frame>;
   if (!state) return <Frame><p className="text-mute">Opening the screen…</p></Frame>;
@@ -64,39 +67,62 @@ export function GmScreen({ code }: { code: string }) {
   }
 
   const chosenFoe = state.foes.find((foe) => foe.id === (attacker || state.foes[0]?.id));
+  const otherFoes = state.foes.filter((foe) => foe.id !== chosenFoe?.id);
   const chosenHero = seated.find((hero) => hero.id === (target || seated[0]?.id));
+  const chosenVictim = otherFoes.find((foe) => foe.id === (foeTarget || otherFoes[0]?.id));
 
   const rollTrouble = () => {
-    if (!chosenFoe || !chosenHero) return;
+    if (!chosenFoe) return;
+    if (foeOnFoe && !chosenVictim) return;
+    if (!foeOnFoe && !chosenHero) return;
     const d12 = 1 + Math.floor(Math.random() * 12);
     const result = resolveAttack({
       d12,
       stat: chosenFoe.attackBonus,
-      ac: chosenHero.ac,
-      tempAc: chosenHero.tempAc,
-      defensiveAc: chosenHero.defenseTagActive ? 1 : 0,
+      ac: foeOnFoe ? chosenVictim!.ac : chosenHero!.ac,
+      tempAc: foeOnFoe ? 0 : chosenHero!.tempAc,
+      defensiveAc: foeOnFoe ? 0 : chosenHero!.defenseTagActive ? 1 : 0,
       ignoreAc: chosenFoe.ignoreAc,
       damageExpression: chosenFoe.damage,
       damageBonus: 0,
-      energyShield: chosenHero.energyShield,
+      energyShield: foeOnFoe ? chosenVictim!.energyShield : chosenHero!.energyShield,
     });
-    const text = `${chosenFoe.name} strikes ${chosenHero.name}. ${result.equation}. ${outcomeLabel(result.outcome)} ${result.damage}.`;
+    const text = foeOnFoe
+      ? foeAttackLog(
+          chosenFoe.name,
+          chosenVictim!.name,
+          `${result.equation}. ${outcomeLabel(result.outcome)} ${result.damage}.`,
+        )
+      : `${chosenFoe.name} strikes ${chosenHero!.name}. ${result.equation}. ${outcomeLabel(result.outcome)} ${result.damage}.`;
     setStrike(text);
     act(async () => {
       await table.dispatch({ type: "log", kind: "roll", summary: text });
-      if (result.outcome !== "miss") {
+      if (result.outcome === "miss") return;
+      if (foeOnFoe && chosenVictim) {
         await table.dispatch({
           type: "applyHarm",
-          target: { kind: "character", id: chosenHero.id },
+          target: { kind: "foe", id: chosenVictim.id },
           amount: result.damage,
           direction: "harm",
-          onlySeated: true,
           breakShield: result.shieldDropped,
           summary: result.shieldDropped
-            ? `${chosenHero.name}'s energy shield swallows it and drops.`
-            : `${chosenHero.name} takes ${result.damage}.`,
+            ? `${chosenVictim.name}'s energy shield swallows it and drops.`
+            : foeAttackLog(chosenFoe.name, chosenVictim.name, `${result.damage} damage.`),
         });
+        return;
       }
+      if (!chosenHero) return;
+      await table.dispatch({
+        type: "applyHarm",
+        target: { kind: "character", id: chosenHero.id },
+        amount: result.damage,
+        direction: "harm",
+        onlySeated: true,
+        breakShield: result.shieldDropped,
+        summary: result.shieldDropped
+          ? `${chosenHero.name}'s energy shield swallows it and drops.`
+          : `${chosenHero.name} takes ${result.damage}.`,
+      });
     });
   };
 
@@ -291,10 +317,33 @@ export function GmScreen({ code }: { code: string }) {
               <select className="min-h-11 rounded-xl border border-line bg-ink px-3" value={attacker || chosenFoe?.id || ""} onChange={(event) => setAttacker(event.target.value)} aria-label="Attacking foe">
                 {state.foes.map((foe) => <option key={foe.id} value={foe.id}>{foe.name}</option>)}
               </select>
-              <select className="min-h-11 rounded-xl border border-line bg-ink px-3" value={target || chosenHero?.id || ""} onChange={(event) => setTarget(event.target.value)} aria-label="Target hero">
-                {seated.map((hero) => <option key={hero.id} value={hero.id}>{hero.name} · AC {effectiveAc(hero)}</option>)}
-              </select>
-              <Button disabled={!chosenFoe || !chosenHero} onClick={rollTrouble}>Roll the strike</Button>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={foeOnFoe}
+                  onChange={(event) => setFoeOnFoe(event.target.checked)}
+                />
+                <span>
+                  Target another foe
+                  <span className="mt-1 block text-mute">Off, so a hero stays selected. On when trouble fights itself.</span>
+                </span>
+              </label>
+              {foeOnFoe ? (
+                <select
+                  className="min-h-11 rounded-xl border border-line bg-ink px-3"
+                  value={otherFoes.some((foe) => foe.id === foeTarget) ? foeTarget : chosenVictim?.id || ""}
+                  onChange={(event) => setFoeTarget(event.target.value)}
+                  aria-label="Target foe"
+                >
+                  {otherFoes.map((foe) => <option key={foe.id} value={foe.id}>{foe.name} · AC {foe.ac}{foe.energyShield ? " · shield" : ""}</option>)}
+                </select>
+              ) : (
+                <select className="min-h-11 rounded-xl border border-line bg-ink px-3" value={target || chosenHero?.id || ""} onChange={(event) => setTarget(event.target.value)} aria-label="Target hero">
+                  {seated.map((hero) => <option key={hero.id} value={hero.id}>{hero.name} · AC {effectiveAc(hero)}</option>)}
+                </select>
+              )}
+              <Button disabled={!chosenFoe || (foeOnFoe ? !chosenVictim : !chosenHero)} onClick={rollTrouble}>Roll the strike</Button>
               {strike ? <Banner>{strike}</Banner> : null}
             </div>
           </Card>

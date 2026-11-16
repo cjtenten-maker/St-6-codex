@@ -19,6 +19,7 @@ import {
 } from "@/lib/rules";
 import { RuleError } from "@/lib/rules/errors";
 import { QUICK_DCS } from "@/lib/data/catalog";
+import { allyAttackLog, type AllyTarget } from "@/lib/table/strike";
 import { Button, Kicker } from "./ui";
 
 type Kind = "attack" | "cast" | "check";
@@ -30,6 +31,7 @@ export function Roller({
   spell,
   foes,
   heroes,
+  allies = [],
   canSpend,
   dispatch,
   onClose,
@@ -40,6 +42,8 @@ export function Roller({
   spell?: Spell;
   foes: Foe[];
   heroes: Character[];
+  /** Other seated heroes. Hidden until the player asks to strike an ally. */
+  allies?: AllyTarget[];
   canSpend: boolean;
   dispatch: (action: Action) => Promise<unknown>;
   onClose: () => void;
@@ -47,6 +51,7 @@ export function Roller({
   const [tagId, setTagId] = useState("");
   const [hitStat, setHitStat] = useState<StatName | "none">(weapon?.hitStat ?? "combat");
   const [targetId, setTargetId] = useState(foes[0]?.id ?? "custom");
+  const [includeAllies, setIncludeAllies] = useState(false);
   const [ac, setAc] = useState(String(foes[0]?.ac ?? 12));
   const [dc, setDc] = useState(12);
   const [focus, setFocus] = useState(Boolean(character.focusOn && character.focusCastBonus));
@@ -61,6 +66,7 @@ export function Roller({
   const [tankSpend, setTankSpend] = useState("0");
 
   const foe = foes.find((item) => item.id === targetId);
+  const ally = includeAllies ? allies.find((item) => item.id === targetId) : undefined;
   const count = weapon?.attacksPerRound ?? 1;
   const tagArmed = Boolean(tagId);
 
@@ -80,7 +86,7 @@ export function Roller({
       ignoreAc: weapon?.ignoreAc,
       damageExpression: weapon?.damage ?? "0",
       damageBonus: damageBonus(statValue(character, bonusName), weapon?.bonusMode ?? "half"),
-      energyShield: Boolean(foe?.energyShield),
+      energyShield: Boolean(ally ? ally.energyShield : foe?.energyShield),
       overheatsOnNat1: weapon?.overheatsOnNat1,
       lockedDiceTotal: locked,
     });
@@ -116,7 +122,8 @@ export function Roller({
           patch: { weapons: character.weapons.map((item) => (item.id === weapon.id ? { ...item, overheated: true } : item)) },
         });
       }
-      await log("roll", attackSummary(character.name, weapon?.name ?? "Strike", next.map((blow) => blow.result)));
+      const rolled = attackSummary(character.name, weapon?.name ?? "Strike", next.map((blow) => blow.result));
+      await log("roll", ally ? `${character.name} attacks ${ally.name} (ally). ${rolled}` : rolled);
     });
 
   const adjust = (index: number, mode: "reroll" | "plus4") =>
@@ -243,7 +250,7 @@ export function Roller({
 
   const applyAttack = () =>
     run(async () => {
-      if (!foe || !blows) return;
+      if ((!foe && !ally) || !blows) return;
       if (meleeTank && overloadPoints === 0) commitTankSpend(tankSpend, character.kineticTank?.points ?? 0);
       const swallowed = blows.some((blow) => blow.result.shieldDropped);
       const names = blows.map((blow) => outcomeLabel(blow.result.outcome)).join(", ");
@@ -253,13 +260,16 @@ export function Roller({
           : meleeSpend > 0
             ? ` ${meleeSpend} from the tank.`
             : "";
+      const detail = `${names}, ${appliedHarm} damage.${tankNote}${swallowed ? " The energy shield drops." : ""}`;
       await dispatch({
         type: "applyHarm",
-        target: { kind: "foe", id: foe.id },
+        target: ally ? { kind: "character", id: ally.id } : { kind: "foe", id: foe!.id },
         amount: appliedHarm,
         direction: "harm",
         breakShield: swallowed,
-        summary: `${character.name} hits ${foe.name}: ${names}, ${appliedHarm} damage.${tankNote}${swallowed ? " The energy shield drops." : ""}`,
+        summary: ally
+          ? allyAttackLog(character.name, ally.name, detail)
+          : `${character.name} hits ${foe!.name}: ${detail}`,
       });
       const tank = character.kineticTank;
       if (overloadPoints > 0 && tank) {
@@ -279,13 +289,15 @@ export function Roller({
   const applyCast = () =>
     run(async () => {
       if (!spell || !cast?.success) return;
-      if (castDamage != null && foe) {
+      if (castDamage != null && (foe || ally)) {
         await dispatch({
           type: "applyHarm",
-          target: { kind: "foe", id: foe.id },
+          target: ally ? { kind: "character", id: ally.id } : { kind: "foe", id: foe!.id },
           amount: castDamage,
           direction: "harm",
-          summary: `${spell.name} deals ${castDamage} to ${foe.name}.`,
+          summary: ally
+            ? `${spell.name} deals ${castDamage} to ${ally.name} (ally).`
+            : `${spell.name} deals ${castDamage} to ${foe!.name}.`,
         });
       }
       if (cast.healing) {
@@ -319,19 +331,54 @@ export function Roller({
         </div>
 
         {kind !== "check" ? (
-          <label className="grid gap-1 text-sm">
-            <span className="text-mute">Target</span>
-            <select className="min-h-11 rounded-xl border border-line bg-panel px-3" value={targetId} onChange={(event) => {
-              setTargetId(event.target.value);
-              const next = foes.find((item) => item.id === event.target.value);
-              if (next) setAc(String(next.ac));
-            }}>
-              {foes.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · AC {item.ac}{item.energyShield ? " · shield" : ""}</option>
-              ))}
-              <option value="custom">Type an AC</option>
-            </select>
-          </label>
+          <div className="grid gap-2">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                className="mt-1"
+                type="checkbox"
+                checked={includeAllies}
+                onChange={(event) => {
+                  const on = event.target.checked;
+                  setIncludeAllies(on);
+                  if (!on && allies.some((item) => item.id === targetId)) {
+                    const first = foes[0];
+                    setTargetId(first?.id ?? "custom");
+                    if (first) setAc(String(first.ac));
+                  }
+                }}
+              />
+              <span>
+                Include allies
+                <span className="mt-1 block text-mute">Mind control or rage. Off, so a foe stays selected.</span>
+              </span>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-mute">Target</span>
+              <select className="min-h-11 rounded-xl border border-line bg-panel px-3" value={targetId} onChange={(event) => {
+                const id = event.target.value;
+                setTargetId(id);
+                const nextFoe = foes.find((item) => item.id === id);
+                const nextAlly = allies.find((item) => item.id === id);
+                if (nextFoe) setAc(String(nextFoe.ac));
+                else if (nextAlly) setAc(String(nextAlly.ac));
+              }}>
+                <optgroup label="Trouble">
+                  {foes.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name} · AC {item.ac}{item.energyShield ? " · shield" : ""}</option>
+                  ))}
+                </optgroup>
+                {includeAllies ? (
+                  <optgroup label="Allies">
+                    {allies.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name} · AC {item.ac}{item.energyShield ? " · shield" : ""}</option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                <option value="custom">Type an AC</option>
+              </select>
+            </label>
+            {ally ? <p className="text-sm text-brass">Ally. The same armor class, shield, and save rules apply.</p> : null}
+          </div>
         ) : null}
 
         {kind === "attack" ? (
@@ -490,9 +537,9 @@ export function Roller({
           </label>
         ) : null}
 
-        {blows && foe ? (
+        {blows && (foe || ally) ? (
           <Button disabled={busy || appliedHarm < 0 || (meleeTank && overloadPoints === 0 && !parsedSpend.ok)} onClick={() => void applyAttack()}>
-            Apply {appliedHarm} to {foe.name}
+            Apply {appliedHarm} to {ally?.name ?? foe?.name}
           </Button>
         ) : null}
         {cast?.success && (cast.damage != null || cast.healing || cast.tempAc) ? (

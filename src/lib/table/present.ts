@@ -1,4 +1,5 @@
 import type { Character, Member, TableState } from "../model";
+import { effectiveAc } from "../model";
 import { normalizePortraitFit, normalizePortraitFocus } from "../portrait";
 import { libraryOf } from "./library";
 
@@ -32,7 +33,7 @@ export function isClaimed(character: Pick<Character, "ownerId" | "claimed" | "co
  * The sheet's numbers, notes, inventory, and the owner's name are not here.
  * How the public portrait is framed is not a secret. It travels with the photo.
  */
-export const PUBLIC_CHARACTER_FIELDS = ["name", "seated", "down", "claimed", "portraitPath", "portraitFit", "portraitFocus"] as const;
+export const PUBLIC_CHARACTER_FIELDS = ["name", "seated", "down", "claimed", "portraitPath", "portraitFit", "portraitFocus", "strike"] as const;
 
 function hiddenSheet(
   partial: Pick<Character, "id" | "name" | "seated" | "portraitPath"> & { portraitFit?: unknown; portraitFocus?: unknown },
@@ -84,11 +85,19 @@ export function characterFromCard(card: {
   portraitPath: string | null;
   portraitFit?: unknown;
   portraitFocus?: unknown;
+  /** Set after migration 008. Missing until then, so an ally cannot be struck by AC yet. */
+  strikeAc?: number | null;
+  energyShield?: boolean | null;
 }): Character {
+  const strike =
+    card.strikeAc == null
+      ? undefined
+      : { ac: card.strikeAc, energyShield: Boolean(card.energyShield) };
   return {
     ...hiddenSheet(card),
     claimed: card.claimed,
     down: card.down,
+    ...(strike ? { strike } : {}),
   };
 }
 
@@ -98,6 +107,7 @@ function toPublicCard(character: Character): Character {
     claimed: character.ownerId != null,
     down: character.hp <= 0,
     portraitPath: character.portraitPath ?? null,
+    strike: { ac: effectiveAc(character), energyShield: character.energyShield },
   };
 }
 

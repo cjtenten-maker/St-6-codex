@@ -168,6 +168,18 @@ export type Character = {
   claimed?: boolean;
   /** Set on a public card when hit points are 0. The hit point number stays hidden. */
   down?: boolean;
+  /**
+   * On a public card only. Armor class to strike (suit, temporary AC, and a
+   * defensive tag already included) and whether an energy shield is up.
+   * The card's own ac stays 0. Hit points stay hidden.
+   */
+  strike?: StrikeProfile;
+};
+
+/** What another player needs in order to swing at this hero. */
+export type StrikeProfile = {
+  ac: number;
+  energyShield: boolean;
 };
 
 export type Foe = {

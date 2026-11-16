@@ -46,6 +46,9 @@ type CardRow = {
   /** Present after migration 006. Older databases omit both. */
   portrait_fit?: string | null;
   portrait_focus?: unknown;
+  /** Present after migration 008. Armor class to strike, and an energy shield. */
+  strike_ac?: number | null;
+  energy_shield?: boolean | null;
 };
 
 type FoeRow = { id: string; table_id: string; foe: Omit<Foe, "id"> };
@@ -134,6 +137,12 @@ export function isMissingColumn(error: { code?: string; message?: string } | nul
   return /could not find the ['"][^'"]+['"] column|column ["']?[\w.]+["']? does not exist/i.test(message);
 }
 
+export function isMissingHarmRpc(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST202") return true;
+  return /could not find the function/i.test(error.message ?? "") && /apply_character_harm/i.test(error.message ?? "");
+}
+
 export function isMissingClaimRpc(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false;
   if (error.code === "PGRST202") return true;
@@ -218,9 +227,12 @@ function folderToRow(tableId: string, folder: TroubleFolder) {
 
 const CARD_PUBLIC = "id, name, seated, down, claimed, portrait_path";
 const CARD_FRAMED = `${CARD_PUBLIC}, portrait_fit, portrait_focus`;
+const CARD_STRIKE = `${CARD_FRAMED}, strike_ac, energy_shield`;
 
 /** Null until the first cards read. False when this database has not applied migration 006. */
 let cardFramingAvailable: boolean | null = null;
+/** False when this database has not applied migration 008. */
+let cardStrikeAvailable: boolean | null = null;
 
 /**
  * Other players read framing from the public card. The sheet jsonb is still the source.
@@ -231,6 +243,16 @@ async function loadCharacterCards(tableId: string) {
   const supabase = getSupabase();
   if (cardFramingAvailable === false) {
     return supabase.from("character_cards").select(CARD_PUBLIC).eq("table_id", tableId);
+  }
+  if (cardStrikeAvailable !== false) {
+    const struck = await supabase.from("character_cards").select(CARD_STRIKE).eq("table_id", tableId);
+    if (!struck.error) {
+      cardFramingAvailable = true;
+      cardStrikeAvailable = true;
+      return struck;
+    }
+    if (!isMissingColumn(struck.error)) return struck;
+    cardStrikeAvailable = false;
   }
   const framed = await supabase.from("character_cards").select(CARD_FRAMED).eq("table_id", tableId);
   if (isMissingColumn(framed.error)) {
@@ -330,6 +352,8 @@ function mergeCharacters(rows: CharacterRow[], cards: CardRow[]): Character[] {
             portraitPath: card.portrait_path,
             portraitFit: card.portrait_fit,
             portraitFocus: card.portrait_focus,
+            strikeAc: card.strike_ac,
+            energyShield: card.energy_shield,
           }),
     );
   }
@@ -856,6 +880,24 @@ export function createSupabaseApi() {
         if (!full) throw new RuleError("No table uses that code.");
       }
       const base = full;
+      if (action.type === "applyHarm" && action.target.kind === "character") {
+        const target = base.characters.find((character) => character.id === action.target.id);
+        if (target?.concealed) {
+          const { error } = await getSupabase().rpc("apply_character_harm", {
+            p_character_id: action.target.id,
+            p_amount: Math.max(0, Math.floor(action.amount)),
+            p_direction: action.direction,
+            p_break_shield: Boolean(action.breakShield),
+            p_summary: action.summary,
+          });
+          if (isMissingHarmRpc(error)) {
+            throw new RuleError("Striking an ally needs supabase/migrations/008_friendly_fire.sql.");
+          }
+          fail(error);
+          const fresh = await loadFull(code);
+          return present(fresh ?? base, viewer.id);
+        }
+      }
       const next =
         action.type === "join" ? base : applyAction(base, action, { actorId: viewer.id, now: new Date().toISOString() });
       await persistDiff(base, next);

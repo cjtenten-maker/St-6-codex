@@ -531,7 +531,8 @@ function applyHarm(
   if (action.onlySeated && !character.seated) {
     throw new RuleError("Trouble only reaches heroes who are seated.");
   }
-  assertCanEdit(state, actor, character);
+  if (character.concealed) throw new RuleError(`${character.name}'s sheet is private.`);
+  // Any member can land a blow. Notes, gear, and the rest of the sheet stay closed.
   const hp =
     action.direction === "heal"
       ? Math.min(character.hpMax, character.hp + amount)
