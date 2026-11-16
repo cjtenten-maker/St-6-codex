@@ -24,7 +24,8 @@ alter table public.characters disable trigger characters_owner_guard;
 do $$
 declare
   hero public.characters%rowtype;
-  sheet jsonb;
+  -- Not named sheet. A variable with the column's name makes the update ambiguous (42702).
+  new_sheet jsonb;
   cha int;
   ac int;
   hp int;
@@ -42,11 +43,11 @@ begin
     return;
   end if;
 
-  sheet := hero.sheet;
-  cha := coalesce((sheet->>'charisma')::int, 0);
-  ac := coalesce((sheet->>'ac')::int, 15);
-  hp := coalesce((sheet->>'hp')::int, 0);
-  hp_max := coalesce((sheet->>'hpMax')::int, 28);
+  new_sheet := hero.sheet;
+  cha := coalesce((new_sheet->>'charisma')::int, 0);
+  ac := coalesce((new_sheet->>'ac')::int, 15);
+  hp := coalesce((new_sheet->>'hp')::int, 0);
+  hp_max := coalesce((new_sheet->>'hpMax')::int, 28);
   mask_on := ac = 10 or hp_max = 38;
 
   if mask_on then
@@ -81,7 +82,7 @@ begin
     order by ord
   ), '[]'::jsonb)
   into spells
-  from jsonb_array_elements(coalesce(sheet->'spells', '[]'::jsonb)) with ordinality as listed(spell, ord);
+  from jsonb_array_elements(coalesce(new_sheet->'spells', '[]'::jsonb)) with ordinality as listed(spell, ord);
 
   select coalesce(jsonb_agg(
     case
@@ -93,16 +94,16 @@ begin
     order by ord
   ), '[]'::jsonb)
   into weapons
-  from jsonb_array_elements(coalesce(sheet->'weapons', '[]'::jsonb)) with ordinality as listed(weapon, ord);
+  from jsonb_array_elements(coalesce(new_sheet->'weapons', '[]'::jsonb)) with ordinality as listed(weapon, ord);
 
-  sheet := jsonb_set(sheet, '{spells}', spells, true);
-  sheet := jsonb_set(sheet, '{weapons}', weapons, true);
-  sheet := jsonb_set(sheet, '{kineticTank}', '{"points": 13}'::jsonb, true);
-  sheet := jsonb_set(sheet, '{ac}', to_jsonb(ac), true);
-  sheet := jsonb_set(sheet, '{hp}', to_jsonb(hp), true);
-  sheet := jsonb_set(sheet, '{hpMax}', to_jsonb(hp_max), true);
-  sheet := jsonb_set(
-    sheet,
+  new_sheet := jsonb_set(new_sheet, '{spells}', spells, true);
+  new_sheet := jsonb_set(new_sheet, '{weapons}', weapons, true);
+  new_sheet := jsonb_set(new_sheet, '{kineticTank}', '{"points": 13}'::jsonb, true);
+  new_sheet := jsonb_set(new_sheet, '{ac}', to_jsonb(ac), true);
+  new_sheet := jsonb_set(new_sheet, '{hp}', to_jsonb(hp), true);
+  new_sheet := jsonb_set(new_sheet, '{hpMax}', to_jsonb(hp_max), true);
+  new_sheet := jsonb_set(
+    new_sheet,
     '{suit}',
     jsonb_build_object(
       'on', mask_on,
@@ -118,7 +119,7 @@ begin
   );
 
   update public.characters
-  set sheet = sheet,
+  set sheet = new_sheet,
       updated_at = now()
   where id = hero.id;
 end $$;

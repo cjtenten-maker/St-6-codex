@@ -13,6 +13,9 @@ describe("Impulse tank and mask migration", () => {
     expect(sql).toMatch(/pointsPerDamage/);
     expect(sql).toMatch(/'shockwave'/);
     expect(sql).toMatch(/'overload'/);
+    expect(sql).toMatch(/new_sheet jsonb/);
+    expect(sql).toMatch(/set sheet = new_sheet/);
+    expect(sql).not.toMatch(/set sheet = sheet/);
     expect(sql).toMatch(/Bronze Lion Mask/);
     expect(sql).toMatch(/onHpMax/);
     expect(sql).toMatch(/offHpMax/);
