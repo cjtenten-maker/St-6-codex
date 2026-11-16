@@ -1,4 +1,8 @@
+import type { PortraitFit, PortraitFocus } from "./model";
 import { RuleError } from "./rules/errors";
+
+/** Small pictures crop here when nobody has tapped a face yet. */
+export const PORTRAIT_TOP_FOCUS: PortraitFocus = { x: 0.5, y: 0 };
 
 export type ArtBucket = "character-art" | "trouble-art";
 
@@ -59,6 +63,79 @@ export function assertPortraitFile(file: { size: number; type: string; name?: st
   if (type === "image/svg+xml") throw new RuleError("Choose a photo.");
   const looksImage = type.startsWith("image/") || IMAGE_EXT.test(file.name ?? "");
   if (!looksImage) throw new RuleError("Choose a photo.");
+}
+
+export function normalizePortraitFit(value: unknown): PortraitFit | undefined {
+  return value === "contain" || value === "cover" ? value : undefined;
+}
+
+/** Keep a finite point inside the photo. Anything else is treated as unset. */
+export function normalizePortraitFocus(value: unknown): PortraitFocus | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const point = value as { x?: unknown; y?: unknown };
+  if (typeof point.x !== "number" || typeof point.y !== "number") return undefined;
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
+  if (point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) return undefined;
+  return roundFocus({ x: point.x, y: point.y });
+}
+
+export function roundFocus(point: { x: number; y: number }): PortraitFocus {
+  return {
+    x: Math.round(clamp01(point.x) * 1000) / 1000,
+    y: Math.round(clamp01(point.y) * 1000) / 1000,
+  };
+}
+
+/**
+ * What to draw. A sheet with no saved choice shows the whole photo.
+ * A thumbnail always covers, and an unset face mark stays at the top.
+ */
+export function portraitFrame(source?: { portraitFit?: unknown; portraitFocus?: unknown } | null): {
+  fit: PortraitFit;
+  focus: PortraitFocus;
+} {
+  return {
+    fit: normalizePortraitFit(source?.portraitFit) ?? "contain",
+    focus: normalizePortraitFocus(source?.portraitFocus) ?? PORTRAIT_TOP_FOCUS,
+  };
+}
+
+export function portraitObjectPosition(focus: PortraitFocus): string {
+  const point = roundFocus(focus);
+  return `${trimPercent(point.x * 100)}% ${trimPercent(point.y * 100)}%`;
+}
+
+/** Sheet frame versus the small pictures on the table and the GM screen. */
+export function portraitLayout(
+  slot: "sheet" | "thumb",
+  source?: { portraitFit?: unknown; portraitFocus?: unknown } | null,
+): { objectFit: "contain" | "cover"; objectPosition: string; blurFill: boolean } {
+  const frame = portraitFrame(source);
+  if (slot === "sheet" && frame.fit === "contain") {
+    return { objectFit: "contain", objectPosition: "50% 50%", blurFill: true };
+  }
+  return { objectFit: "cover", objectPosition: portraitObjectPosition(frame.focus), blurFill: false };
+}
+
+/** Map a tap on the photo itself to a stored face mark. The box is the photo, not the letterbox. */
+export function focusFromClientPoint(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+): PortraitFocus | null {
+  if (!(rect.width > 0) || !(rect.height > 0)) return null;
+  return roundFocus({
+    x: (clientX - rect.left) / rect.width,
+    y: (clientY - rect.top) / rect.height,
+  });
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function trimPercent(value: number): string {
+  return String(Math.round(value * 10) / 10);
 }
 
 /** Downscale to a JPEG the bucket will accept. iPhone HEIC is decoded when the browser can. */

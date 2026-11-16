@@ -43,6 +43,9 @@ type CardRow = {
   down: boolean;
   claimed: boolean;
   portrait_path: string | null;
+  /** Present after migration 006. Older databases omit both. */
+  portrait_fit?: string | null;
+  portrait_focus?: unknown;
 };
 
 type FoeRow = { id: string; table_id: string; foe: Omit<Foe, "id"> };
@@ -117,6 +120,18 @@ export function isMissingRelation(error: { code?: string; message?: string } | n
   if (!error) return false;
   if (error.code === "PGRST205" || error.code === "42P01") return true;
   return /schema cache|could not find the table|relation .* does not exist/i.test(error.message ?? "");
+}
+
+/**
+ * A column the framing migration has not added yet.
+ * Checked before isMissingRelation: that helper also matches the words "schema cache",
+ * and a missing portrait_fit column says "schema cache" too.
+ */
+export function isMissingColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const message = error.message ?? "";
+  if (error.code === "42703") return true;
+  return /could not find the ['"][^'"]+['"] column|column ["']?[\w.]+["']? does not exist/i.test(message);
 }
 
 export function isMissingClaimRpc(error: { code?: string; message?: string } | null): boolean {
@@ -201,6 +216,31 @@ function folderToRow(tableId: string, folder: TroubleFolder) {
   return { id: folder.id, table_id: tableId, name: folder.name, sort: folder.sort };
 }
 
+const CARD_PUBLIC = "id, name, seated, down, claimed, portrait_path";
+const CARD_FRAMED = `${CARD_PUBLIC}, portrait_fit, portrait_focus`;
+
+/** Null until the first cards read. False when this database has not applied migration 006. */
+let cardFramingAvailable: boolean | null = null;
+
+/**
+ * Other players read framing from the public card. The sheet jsonb is still the source.
+ * A database that has not applied 006 keeps loading. Those players then see the whole
+ * photo on the sheet and a top crop on the small pictures.
+ */
+async function loadCharacterCards(tableId: string) {
+  const supabase = getSupabase();
+  if (cardFramingAvailable === false) {
+    return supabase.from("character_cards").select(CARD_PUBLIC).eq("table_id", tableId);
+  }
+  const framed = await supabase.from("character_cards").select(CARD_FRAMED).eq("table_id", tableId);
+  if (isMissingColumn(framed.error)) {
+    cardFramingAvailable = false;
+    return supabase.from("character_cards").select(CARD_PUBLIC).eq("table_id", tableId);
+  }
+  if (!framed.error) cardFramingAvailable = true;
+  return framed;
+}
+
 async function loadFull(code: string): Promise<TableState | null> {
   const supabase = getSupabase();
   const { data: table, error } = await supabase.from("tables").select("*").eq("code", code.toUpperCase()).maybeSingle();
@@ -210,7 +250,7 @@ async function loadFull(code: string): Promise<TableState | null> {
   const [members, characters, cards, foes, logs, notes, folders, trouble] = await Promise.all([
     supabase.from("table_members").select("profile_id, profiles(display_name, email)").eq("table_id", row.id),
     supabase.from("characters").select("*").eq("table_id", row.id),
-    supabase.from("character_cards").select("id, name, seated, down, claimed, portrait_path").eq("table_id", row.id),
+    loadCharacterCards(row.id),
     supabase.from("foes").select("*").eq("table_id", row.id),
     supabase.from("log_entries").select("*").eq("table_id", row.id).order("created_at", { ascending: true }),
     supabase.from("gm_notes").select("body").eq("table_id", row.id).maybeSingle(),
@@ -220,6 +260,9 @@ async function loadFull(code: string): Promise<TableState | null> {
   fail(members.error);
   fail(characters.error);
   if (cards.error) {
+    if (isMissingColumn(cards.error)) {
+      throw new RuleError("Portrait framing needs supabase/migrations/006_portrait_framing.sql.");
+    }
     if (cards.error.code === "PGRST205" || /character_cards/i.test(cards.error.message)) {
       throw new RuleError("Character privacy isn't on this database yet. Apply supabase/migrations/002_character_privacy.sql.");
     }
@@ -285,6 +328,8 @@ function mergeCharacters(rows: CharacterRow[], cards: CardRow[]): Character[] {
             down: card.down,
             claimed: card.claimed,
             portraitPath: card.portrait_path,
+            portraitFit: card.portrait_fit,
+            portraitFocus: card.portrait_focus,
           }),
     );
   }

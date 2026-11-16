@@ -170,7 +170,7 @@ export function GmScreen({ code }: { code: string }) {
                 return (
                   <li key={character.id} className="flex items-center justify-between gap-2 rounded-xl border border-line px-3 py-2">
                     <span className="flex min-w-0 items-center gap-2">
-                      <Portrait path={character.portraitPath} name={character.name} />
+                      <Portrait path={character.portraitPath} name={character.name} fit={character.portraitFit} focus={character.portraitFocus} />
                       <span className="min-w-0 truncate">
                         {character.name}
                         {mine ? <span className="text-mute"> · yours, sitting out</span> : null}

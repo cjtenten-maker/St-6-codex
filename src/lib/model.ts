@@ -49,6 +49,15 @@ export type Suit = {
   offAc: number;
 };
 
+/** contain shows the whole photo in the sheet frame. cover crops that frame. */
+export type PortraitFit = "contain" | "cover";
+
+/** A point on the photo, measured from the top-left. Each axis is 0 to 1. */
+export type PortraitFocus = {
+  x: number;
+  y: number;
+};
+
 export type Character = {
   id: string;
   name: string;
@@ -87,6 +96,16 @@ export type Character = {
    * Everyone at the table can see it. Empty until someone claims the sheet and uploads one.
    */
   portraitPath?: string | null;
+  /**
+   * How the sheet's large portrait sits in its frame.
+   * Missing means show the whole picture. Stored on the sheet jsonb.
+   */
+  portraitFit?: PortraitFit;
+  /**
+   * Where small pictures, and Fill frame, keep the face.
+   * Missing means the top center. Stored on the sheet jsonb.
+   */
+  portraitFocus?: PortraitFocus;
   /** True on a public card. The numbers on that object are empty, not the real sheet. */
   concealed?: boolean;
   /** Set on a public card. Does not say who claimed it. */
@@ -228,6 +247,8 @@ export type CharacterPatch = Partial<
     | "focusCastBonus"
     | "suit"
     | "playerName"
+    | "portraitFit"
+    | "portraitFocus"
   >
 >;
 
