@@ -7,7 +7,7 @@ import { Creator } from "./Creator";
 import { Frame } from "./Nav";
 import type { Character, Member } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
-import { manaMaximum } from "@/lib/rules";
+import { manaMaximum, tankCap } from "@/lib/rules";
 import { isClaimed } from "@/lib/table/present";
 import { Portrait } from "./Portrait";
 import { TableBanner } from "./TableBanner";
@@ -117,7 +117,7 @@ export function TableScreen({ code }: { code: string }) {
                   <span className="block truncate font-medium">{character.name}</span>
                   <span className="text-xs text-mute">
                     {open
-                      ? `HP ${character.hp}/${character.hpMax} · Mana ${character.mana}/${manaMaximum(character.arcana)} · AC ${effectiveAc(character)}`
+                      ? `HP ${character.hp}/${character.hpMax} · Mana ${character.mana}/${manaMaximum(character.arcana)}${character.kineticTank ? ` · Tank ${character.kineticTank.points}/${tankCap(character.combat)}` : ""} · AC ${effectiveAc(character)}`
                       : publicLine(character)}
                   </span>
                 </span>
@@ -183,6 +183,9 @@ export function TableScreen({ code }: { code: string }) {
                     <div className="mt-3 grid gap-2">
                       <Meter label="HP" value={character.hp} max={character.hpMax} tone="hp" />
                       <Meter label="Mana" value={character.mana} max={manaMaximum(character.arcana)} tone="mana" />
+                      {character.kineticTank ? (
+                        <Meter label="Kinetic tank" value={character.kineticTank.points} max={tankCap(character.combat)} tone="tank" />
+                      ) : null}
                     </div>
                   )}
                 </div>

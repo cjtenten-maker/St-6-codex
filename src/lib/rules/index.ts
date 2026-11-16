@@ -6,5 +6,23 @@ export { manaMaximum, spendMana, resolveCast, resolveCheck } from "./cast";
 export type { CastInput, CastResult, CheckResult } from "./cast";
 export { HERO_START, HERO_CAP, awardHeroPoint, spendHeroPoint, shortRest, longRest } from "./rest";
 export type { RestSnapshot, RestResult } from "./rest";
+export {
+  TANK_PER_COMBAT,
+  TANK_ON_DAMAGE,
+  TANK_ON_BRACE,
+  tankCap,
+  clampTank,
+  bankTank,
+  spendTankPoints,
+  tankToDamage,
+  overloadStrike,
+  normalizeTank,
+  tankWithPoints,
+  tankAfterLongRest,
+  tankChanged,
+  tankLog,
+} from "./tank";
+export { suitHpMax, suitBonusHp, hpAfterSuit, suitToggleLabel } from "./suit";
+export { normalizeCredits, formatUc, creditsLog } from "./credits";
 export { rollStatPool, rollHitPoints, tagCountAllowed, stackedAc, parsePositiveInteger } from "./creation";
 export type { StatPool, HitPointRoll } from "./creation";

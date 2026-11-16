@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Character, Foe } from "@/lib/model";
 import { effectiveAc } from "@/lib/model";
-import { outcomeLabel, resolveAttack } from "@/lib/rules";
+import { manaMaximum, outcomeLabel, resolveAttack, tankCap } from "@/lib/rules";
 import { isOwnCharacter } from "@/lib/table/present";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
@@ -27,6 +27,7 @@ export function GmScreen({ code }: { code: string }) {
   const [attacker, setAttacker] = useState("");
   const [target, setTarget] = useState("");
   const [strike, setStrike] = useState<string | null>(null);
+  const [countsAsDamage, setCountsAsDamage] = useState(false);
 
   if (!codex.ready || !viewer) return <Frame><p className="text-mute">Taking your seat…</p></Frame>;
   if (!state) return <Frame><p className="text-mute">Opening the screen…</p></Frame>;
@@ -108,6 +109,45 @@ export function GmScreen({ code }: { code: string }) {
           <h1 className="font-display text-4xl">GM</h1>
           <p className="mt-1 text-sm text-mute">Your own characters sit this one out. The notes stay for the next GM.</p>
           {table.error ? <p className="mt-2 text-sm text-hp">{table.error}</p> : null}
+
+          <section className="mt-4">
+            <h2 className="font-display text-2xl">Party</h2>
+            <p className="text-sm text-mute">Seated heroes. Armor class includes a suit or mask, temporary AC, and a defensive tag.</p>
+            <label className="mt-2 flex items-start gap-2 text-sm">
+              <input
+                className="mt-1"
+                type="checkbox"
+                checked={countsAsDamage}
+                onChange={(event) => setCountsAsDamage(event.target.checked)}
+              />
+              <span>
+                Counts as damage taken
+                <span className="mt-1 block text-mute">
+                  Fills a kinetic tank from the hit points lost. Leave this off to correct a number. Healing never fills it. A trouble strike still does.
+                </span>
+              </span>
+            </label>
+            <div className="mt-3 grid gap-2">
+              {seated.length === 0 ? <p className="text-sm text-mute">Nobody is seated.</p> : null}
+              {seated.map((hero) => (
+                <PartyHero
+                  key={`${hero.id}-${hero.hp}`}
+                  code={state.table.code}
+                  hero={hero}
+                  onHp={(hp) =>
+                    act(() =>
+                      table.dispatch({
+                        type: "setHitPoints",
+                        characterId: hero.id,
+                        hp,
+                        countsAsDamage: countsAsDamage && hp < hero.hp,
+                      }),
+                    )
+                  }
+                />
+              ))}
+            </div>
+          </section>
 
           <Card className="mt-4">
             <Kicker>Private notes</Kicker>
@@ -287,6 +327,69 @@ export function GmScreen({ code }: { code: string }) {
         </div>
       </div>
     </Frame>
+  );
+}
+
+function PartyHero({
+  code,
+  hero,
+  onHp,
+}: {
+  code: string;
+  hero: Character;
+  onHp: (hp: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(hero.hp));
+  const ac = effectiveAc(hero);
+  const manaMax = manaMaximum(hero.arcana);
+  const extras = [
+    hero.tempAc ? `+${hero.tempAc} temporary` : "",
+    hero.defenseTagActive ? "tag +1" : "",
+  ].filter(Boolean);
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Link href={`/t/${code}/c/${hero.id}`} className="font-display text-2xl leading-none">
+            {hero.name}
+          </Link>
+          {hero.suit ? (
+            <p className="mt-1 text-xs text-mute">{hero.suit.name?.trim() || "Suit"} {hero.suit.on ? "on" : "off"}</p>
+          ) : null}
+        </div>
+        <p className="num text-right text-2xl leading-none">AC {ac}</p>
+      </div>
+      <p className="mt-2 text-sm text-mute">
+        HP {hero.hp}/{hero.hpMax} · Mana {hero.mana}/{manaMax}
+        {hero.kineticTank ? ` · Tank ${hero.kineticTank.points}/${tankCap(hero.combat)}` : ""}
+        {extras.length > 0 ? ` · ${extras.join(" · ")}` : ""}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button type="button" tone="ghost" className="min-h-9 px-3" disabled={hero.hp <= 0} onClick={() => onHp(hero.hp - 1)}>
+          −1 HP
+        </Button>
+        <Button type="button" tone="ghost" className="min-h-9 px-3" disabled={hero.hp >= hero.hpMax} onClick={() => onHp(hero.hp + 1)}>
+          +1 HP
+        </Button>
+      </div>
+      <form
+        className="mt-2 flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const next = Number(draft);
+          if (!Number.isFinite(next)) return;
+          onHp(next);
+        }}
+      >
+        <TextField
+          inputMode="numeric"
+          aria-label={`Set ${hero.name} hit points`}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button type="submit" tone="ghost">Set</Button>
+      </form>
+    </Card>
   );
 }
 
