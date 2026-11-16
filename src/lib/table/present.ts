@@ -1,4 +1,5 @@
 import type { Character, Member, TableState } from "../model";
+import { normalizePortraitFit, normalizePortraitFocus } from "../portrait";
 import { libraryOf } from "./library";
 
 /** The written name and the person holding the phone. "Justin" matches "Justin Ratsprit". */
@@ -29,10 +30,15 @@ export function isClaimed(character: Pick<Character, "ownerId" | "claimed" | "co
  * What every other player at the table can see.
  * id and table id exist so the app can tell cards apart. They are not secrets.
  * The sheet's numbers, notes, inventory, and the owner's name are not here.
+ * How the public portrait is framed is not a secret. It travels with the photo.
  */
-export const PUBLIC_CHARACTER_FIELDS = ["name", "seated", "down", "claimed", "portraitPath"] as const;
+export const PUBLIC_CHARACTER_FIELDS = ["name", "seated", "down", "claimed", "portraitPath", "portraitFit", "portraitFocus"] as const;
 
-function hiddenSheet(partial: Pick<Character, "id" | "name" | "seated" | "portraitPath">): Character {
+function hiddenSheet(
+  partial: Pick<Character, "id" | "name" | "seated" | "portraitPath"> & { portraitFit?: unknown; portraitFocus?: unknown },
+): Character {
+  const portraitFit = normalizePortraitFit(partial.portraitFit);
+  const portraitFocus = normalizePortraitFocus(partial.portraitFocus);
   return {
     id: partial.id,
     name: partial.name,
@@ -62,6 +68,8 @@ function hiddenSheet(partial: Pick<Character, "id" | "name" | "seated" | "portra
     energyShield: false,
     seated: partial.seated,
     portraitPath: partial.portraitPath ?? null,
+    ...(portraitFit ? { portraitFit } : {}),
+    ...(portraitFocus ? { portraitFocus } : {}),
     concealed: true,
   };
 }
@@ -74,6 +82,8 @@ export function characterFromCard(card: {
   down: boolean;
   claimed: boolean;
   portraitPath: string | null;
+  portraitFit?: unknown;
+  portraitFocus?: unknown;
 }): Character {
   return {
     ...hiddenSheet(card),
@@ -94,7 +104,7 @@ function toPublicCard(character: Character): Character {
 /**
  * GM notes and other people's sheets stay on the table.
  * The current GM sees every sheet. A player sees their own.
- * Everyone else gets the public card: name, portrait, seated, down, claimed.
+ * Everyone else gets the public card: name, portrait and its framing, seated, down, claimed.
  */
 export function present(state: TableState, viewerId: string | null): TableState {
   const gm = Boolean(viewerId && state.table.currentGmId === viewerId);

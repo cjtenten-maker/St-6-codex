@@ -112,7 +112,7 @@ export function TableScreen({ code }: { code: string }) {
             const open = !character.concealed;
             const identity = (
               <span className="flex min-w-0 flex-1 items-center gap-3">
-                <Portrait path={character.portraitPath} name={character.name} />
+                <Portrait path={character.portraitPath} name={character.name} fit={character.portraitFit} focus={character.portraitFocus} />
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{character.name}</span>
                   <span className="text-xs text-mute">
@@ -163,7 +163,7 @@ export function TableScreen({ code }: { code: string }) {
           const card = (
             <Card>
               <div className="flex items-start gap-3">
-                <Portrait path={character.portraitPath} name={character.name} />
+                <Portrait path={character.portraitPath} name={character.name} fit={character.portraitFit} focus={character.portraitFocus} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -211,7 +211,7 @@ export function TableScreen({ code }: { code: string }) {
             const claimed = isClaimed(character);
             const identity = (
               <span className="flex min-w-0 flex-1 items-center gap-3">
-                <Portrait path={character.portraitPath} name={character.name} />
+                <Portrait path={character.portraitPath} name={character.name} fit={character.portraitFit} focus={character.portraitFocus} />
                 <span className="min-w-0">
                   <span className="block truncate">{character.name}</span>
                   <span className="text-xs text-mute">{faceLine(character, state.members)}</span>

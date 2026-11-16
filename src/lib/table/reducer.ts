@@ -4,6 +4,7 @@ import { RuleError } from "../rules/errors";
 import { manaMaximum, spendMana } from "../rules/cast";
 import { HERO_CAP, HERO_START, awardHeroPoint, longRest, shortRest, spendHeroPoint } from "../rules/rest";
 import { enterLine, foeFromTrouble, instanceNames, libraryOf } from "./library";
+import { normalizePortraitFit, normalizePortraitFocus } from "../portrait";
 import { isClaimed, isOwnCharacter } from "./present";
 
 export type ActionContext = {
@@ -129,7 +130,7 @@ function setPortrait(state: TableState, actor: Member, characterId: string, port
   if (!isGm(state, actor) && character.ownerId !== actor.id) {
     throw new RuleError("Only the player or the GM can change the portrait.");
   }
-  return mapCharacter(state, characterId, (current) => ({ ...current, portraitPath }));
+  return mapCharacter(state, characterId, (current) => clearPortraitFrame({ ...current, portraitPath }));
 }
 
 function patchCharacter(state: TableState, actor: Member, characterId: string, patch: CharacterPatch): TableState {
@@ -611,7 +612,7 @@ function normalizeCharacter(character: Character): Character {
       offAc: Math.floor(suit.offAc),
     };
   }
-  return {
+  const next: Character = {
     ...character,
     charisma,
     strength: Math.floor(character.strength),
@@ -626,6 +627,20 @@ function normalizeCharacter(character: Character): Character {
     suit,
     tags: character.tags.slice(0, 5),
   };
+  const portraitFit = normalizePortraitFit(character.portraitFit);
+  const portraitFocus = normalizePortraitFocus(character.portraitFocus);
+  if (portraitFit) next.portraitFit = portraitFit;
+  else delete next.portraitFit;
+  if (portraitFocus) next.portraitFocus = portraitFocus;
+  else delete next.portraitFocus;
+  return next;
+}
+
+function clearPortraitFrame(character: Character): Character {
+  const next = { ...character };
+  delete next.portraitFit;
+  delete next.portraitFocus;
+  return next;
 }
 
 function syncOrder(state: TableState): TableState {

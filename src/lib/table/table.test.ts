@@ -339,6 +339,47 @@ describe("character privacy", () => {
     state = run(state, { type: "setPortrait", characterId: ID.elowynne, portraitPath: "data:image/jpeg;base64,gm" }, ID.corbin, "gm-art");
     expect(character(present(state, ID.justin), ID.elowynne).portraitPath).toBe("data:image/jpeg;base64,gm");
 
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { portraitFit: "cover", portraitFocus: { x: 0.4, y: 0.15 } } },
+      ID.trish,
+      "frame",
+    );
+    expect(character(state, ID.elowynne).portraitFit).toBe("cover");
+    expect(character(state, ID.elowynne).portraitFocus).toEqual({ x: 0.4, y: 0.15 });
+    const framed = character(present(state, ID.justin), ID.elowynne);
+    expect(framed.portraitFit).toBe("cover");
+    expect(framed.portraitFocus).toEqual({ x: 0.4, y: 0.15 });
+    expect(framed.notes).toBe("");
+    expect(framed.hp).toBe(0);
+    expect(() =>
+      run(state, { type: "patchCharacter", characterId: ID.elowynne, patch: { portraitFit: "contain" } }, ID.justin),
+    ).toThrow(/private|someone else/i);
+
+    state = run(
+      state,
+      { type: "patchCharacter", characterId: ID.elowynne, patch: { portraitFit: "cover", portraitFocus: { x: 0.2, y: 0.3 } } },
+      ID.corbin,
+      "gm-frame",
+    );
+    expect(character(state, ID.elowynne).portraitFocus).toEqual({ x: 0.2, y: 0.3 });
+    state = run(
+      state,
+      {
+        type: "patchCharacter",
+        characterId: ID.elowynne,
+        patch: { portraitFit: "nope" as "cover", portraitFocus: { x: 4, y: -1 } },
+      },
+      ID.trish,
+      "bad-frame",
+    );
+    expect(character(state, ID.elowynne).portraitFit).toBeUndefined();
+    expect(character(state, ID.elowynne).portraitFocus).toBeUndefined();
+    state = run(state, { type: "setPortrait", characterId: ID.elowynne, portraitPath: "data:image/jpeg;base64,next" }, ID.trish, "replace");
+    expect(character(state, ID.elowynne).portraitPath).toBe("data:image/jpeg;base64,next");
+    expect(character(state, ID.elowynne).portraitFit).toBeUndefined();
+    expect(character(state, ID.elowynne).portraitFocus).toBeUndefined();
+
     state = run(state, { type: "claim", characterId: ID.naibroch }, ID.corbin, "own");
     state = run(state, { type: "claimGm" }, ID.trish, "handoff");
     const oldGm = present(state, ID.corbin);

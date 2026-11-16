@@ -23,4 +23,15 @@ describe("storage delete migrations", () => {
     expect(sql).toMatch(/bucket_id = 'trouble-art'/);
     expect(sql).not.toMatch(/delete\s+from\s+storage\.objects/i);
   });
+
+  it("publishes portrait framing from the sheet and does not touch storage", () => {
+    const sql = readFileSync(join(migrations, "006_portrait_framing.sql"), "utf8");
+    expect(sql).toMatch(/add column if not exists portrait_fit text/i);
+    expect(sql).toMatch(/add column if not exists portrait_focus jsonb/i);
+    expect(sql).toMatch(/sheet ->> 'portraitFit'/);
+    expect(sql).toMatch(/portraitFocus/);
+    expect(sql).toMatch(/sync_character_card/);
+    expect(sql).not.toMatch(/delete\s+from\s+storage\.objects/i);
+    expect(sql).not.toMatch(/alter table public\.characters/i);
+  });
 });

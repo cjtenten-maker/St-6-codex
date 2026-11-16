@@ -8,7 +8,7 @@ import { effectiveAc } from "@/lib/model";
 import { manaMaximum } from "@/lib/rules";
 import { useCodex, useTable } from "./CodexProvider";
 import { Frame } from "./Nav";
-import { Portrait, PortraitControls } from "./Portrait";
+import { Portrait, PortraitControls, PortraitFraming } from "./Portrait";
 import { Roller } from "./Roller";
 import { TableBanner } from "./TableBanner";
 import { Banner, Button, Card, Kicker, Meter, Pips, TextField, Area } from "./ui";
@@ -84,7 +84,7 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           <h1 className="font-display text-4xl font-medium leading-tight">{character.name}</h1>
           <p className="mt-2 text-mute">This sheet is private.</p>
         </header>
-        <Portrait path={character.portraitPath} name={character.name} size="lg" />
+        <Portrait path={character.portraitPath} name={character.name} size="lg" fit={character.portraitFit} focus={character.portraitFocus} />
         {table.error ? <p className="mt-3 text-sm text-hp">{table.error}</p> : null}
         {!character.claimed ? (
           <Button className="mt-4" onClick={() => act(() => table.dispatch({ type: "claim", characterId: character.id }))}>
@@ -139,21 +139,38 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
           {character.role ? ` · ${character.role}` : ""}
         </Kicker>
         <h1 className="font-display text-4xl font-medium leading-tight">{character.name}</h1>
-        <Portrait path={character.portraitPath} name={character.name} size="lg" />
+        <Portrait path={character.portraitPath} name={character.name} size="lg" fit={character.portraitFit} focus={character.portraitFocus} />
         {canPortrait ? (
-          <PortraitControls
-            path={character.portraitPath}
-            busy={portraitBusy}
-            onPick={pickPortrait}
-            onRemove={async () => {
-              setPortraitBusy(true);
-              try {
-                await table.setPortrait(character.id, null);
-              } finally {
-                setPortraitBusy(false);
-              }
-            }}
-          />
+          <>
+            <PortraitControls
+              path={character.portraitPath}
+              busy={portraitBusy}
+              onPick={pickPortrait}
+              onRemove={async () => {
+                setPortraitBusy(true);
+                try {
+                  await table.setPortrait(character.id, null);
+                } finally {
+                  setPortraitBusy(false);
+                }
+              }}
+            />
+            {character.portraitPath ? (
+              <PortraitFraming
+                path={character.portraitPath}
+                name={character.name}
+                fit={character.portraitFit}
+                focus={character.portraitFocus}
+                busy={portraitBusy}
+                onFit={(portraitFit) =>
+                  act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { portraitFit } }))
+                }
+                onFocus={(portraitFocus) =>
+                  act(() => table.dispatch({ type: "patchCharacter", characterId: character.id, patch: { portraitFocus } }))
+                }
+              />
+            ) : null}
+          </>
         ) : null}
         <p className="mt-1 text-sm text-mute">
           {owner ? `Played by ${owner.displayName}` : character.playerName ? `Sheet says ${character.playerName}` : "Unclaimed"}
@@ -380,7 +397,11 @@ export function SheetScreen({ code, id }: { code: string; id: string }) {
         <Amend
           character={character}
           onSave={async (patch) => {
-            await table.dispatch({ type: "patchCharacter", characterId: character.id, patch });
+            const { portraitPath, portraitFit, portraitFocus, ...sheet } = patch;
+            void portraitPath;
+            void portraitFit;
+            void portraitFocus;
+            await table.dispatch({ type: "patchCharacter", characterId: character.id, patch: sheet });
             setAmending(false);
           }}
           onRetire={async () => {
