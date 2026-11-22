@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { consumeAuthCallback } from "@/lib/auth/callback";
 import { authCallbackClient, supabaseConfigured } from "@/lib/backend/supabase";
+import { Brand } from "@/components/Brand";
 import { MagicLinkForm } from "@/components/MagicLinkForm";
 import { Card, Kicker } from "@/components/ui";
 
@@ -30,6 +31,7 @@ export default function AuthCallback() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-5 px-4 py-8">
+      <Brand />
       <header>
         <Kicker>Sign in</Kicker>
         <h1 className="mt-1 font-display text-4xl font-medium tracking-tight text-paper">

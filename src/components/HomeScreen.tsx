@@ -7,6 +7,7 @@ import { DEMO_PLAYERS } from "@/lib/ids";
 import { hasJoinedTable, lastTable, rememberTable } from "@/lib/table/identity";
 import { useCodex } from "./CodexProvider";
 import { MagicLinkForm } from "./MagicLinkForm";
+import { Brand } from "./Brand";
 import { Button, Card, Kicker, TextField } from "./ui";
 
 export function HomeScreen() {
@@ -64,9 +65,8 @@ export function HomeScreen() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-5 px-4 py-8">
       <header>
-        <Kicker>Field codex</Kicker>
-        <h1 className="mt-1 font-display text-5xl font-medium tracking-tight text-paper">ST-6</h1>
-        <p className="mt-2 max-w-sm text-mute">
+        <Brand as="h1" />
+        <p className="mt-3 max-w-sm text-mute">
           A seat on every phone. One GM tonight. The d12 does the arithmetic.
         </p>
       </header>
