@@ -9,7 +9,7 @@
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "python3 scripts/make-icons.py"
   },
   "dependencies": {
     "@fontsource/fraunces": "^5.2.9",

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Brand } from "./Brand";
 import { cx } from "./ui";
 
 export function Nav({ code }: { code: string }) {
@@ -50,7 +51,10 @@ export function Nav({ code }: { code: string }) {
 export function Frame({ code, children }: { code?: string; children: React.ReactNode }) {
   return (
     <>
-      <main className="mx-auto min-h-dvh w-full max-w-lg px-4 pb-28 pt-5 lg:max-w-5xl">{children}</main>
+      <main className="mx-auto min-h-dvh w-full max-w-lg px-4 pb-28 pt-5 lg:max-w-5xl">
+        <Brand size="sm" className="mb-4" />
+        {children}
+      </main>
       {code ? <Nav code={code} /> : null}
     </>
   );
